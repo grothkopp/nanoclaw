@@ -28,6 +28,11 @@ vi.mock('../db.js', () => ({
   updateChatName: vi.fn(),
 }));
 
+// Mock transcription
+vi.mock('../transcription.js', () => ({
+  transcribeAudio: vi.fn(() => Promise.resolve(null)),
+}));
+
 // Mock fs
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
@@ -564,6 +569,43 @@ describe('WhatsAppChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledTimes(1);
       const msg = (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(msg.content).toBe('');
+      expect(msg.media).toBeDefined();
+      expect(msg.media.type).toBe('audio');
+    });
+
+    it('transcribes voice notes when transcription is available', async () => {
+      const { transcribeAudio } = await import('../transcription.js');
+      (transcribeAudio as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        'Hello, this is a voice message',
+      );
+
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-voice',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            audioMessage: { mimetype: 'audio/ogg; codecs=opus', ptt: true },
+          },
+          pushName: 'Frank',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(transcribeAudio).toHaveBeenCalled();
+      expect(opts.onMessage).toHaveBeenCalledTimes(1);
+      const msg = (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
+      expect(msg.content).toBe(
+        '[Voice transcription: Hello, this is a voice message]',
+      );
       expect(msg.media).toBeDefined();
       expect(msg.media.type).toBe('audio');
     });

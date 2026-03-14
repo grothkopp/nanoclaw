@@ -29,6 +29,7 @@ import {
   NewMessageMedia,
 } from '../types.js';
 import { registerChannel, ChannelOpts } from './registry.js';
+import { transcribeAudio } from '../transcription.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -253,7 +254,7 @@ export class WhatsAppChannel implements Channel {
             const mediaType = mediaKey ? MEDIA_TYPE_MAP[mediaKey] : undefined;
 
             // Extract text content (caption for media, text for text messages)
-            const content =
+            let content =
               normalized.conversation ||
               normalized.extendedTextMessage?.text ||
               normalized.imageMessage?.caption ||
@@ -284,6 +285,16 @@ export class WhatsAppChannel implements Channel {
                 fileName,
                 registeredGroup,
               );
+            }
+
+            // Transcribe audio messages (voice notes, audio files)
+            if (mediaInfo?.type === 'audio' && mediaInfo.path) {
+              const transcription = await transcribeAudio(mediaInfo.path);
+              if (transcription) {
+                content = content
+                  ? `${content}\n\n[Voice transcription: ${transcription}]`
+                  : `[Voice transcription: ${transcription}]`;
+              }
             }
 
             const sender = msg.key.participant || msg.key.remoteJid || '';
