@@ -30,8 +30,8 @@ RUN apt-get update && apt-get install -y \
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Install agent-browser and claude-code globally
-RUN npm install -g agent-browser @anthropic-ai/claude-code
+# Install agent-browser, claude-code, and Google Workspace CLI globally
+RUN npm install -g agent-browser @anthropic-ai/claude-code @googleworkspace/cli
 
 # Create app directory
 WORKDIR /app
@@ -51,11 +51,14 @@ RUN npm run build
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
 
+# Configure git to use GITHUB_TOKEN for authentication when available
+RUN printf '#!/bin/sh\nif [ -n "$GITHUB_TOKEN" ]; then echo "protocol=https\nhost=github.com\nusername=x-access-token\npassword=$GITHUB_TOKEN"; fi\n' > /usr/local/bin/git-credential-env && chmod +x /usr/local/bin/git-credential-env
+
 # Create entrypoint script
 # Container input (prompt, group info) is passed via stdin JSON.
 # Credentials are injected by the host's credential proxy — never passed here.
 # Follow-up messages arrive via IPC files in /workspace/ipc/input/
-RUN printf '#!/bin/bash\nset -e\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\nln -s /app/node_modules /tmp/dist/node_modules\nchmod -R a-w /tmp/dist\ncat > /tmp/input.json\nnode /tmp/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+RUN printf '#!/bin/bash\nset -e\nif [ -n "$GITHUB_TOKEN" ]; then\n  git config --global credential.helper /usr/local/bin/git-credential-env\n  git config --global user.name "Sven"\n  git config --global user.email "sven@nanoclaw"\nfi\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\nln -s /app/node_modules /tmp/dist/node_modules\nchmod -R a-w /tmp/dist\ncat > /tmp/input.json\nnode /tmp/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root) for writable directories
 RUN chown -R node:node /workspace && chmod 777 /home/node
