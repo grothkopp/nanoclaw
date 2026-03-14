@@ -185,8 +185,8 @@ async function runTask(
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
-          // Forward result to user (sendMessage handles formatting)
-          await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          // Don't auto-forward result — tasks send messages explicitly via
+          // mcp__nanoclaw__send_message to avoid duplicate messages.
           scheduleClose();
         }
         if (streamedOutput.status === 'success') {
@@ -204,7 +204,6 @@ async function runTask(
     if (output.status === 'error') {
       error = output.error || 'Unknown error';
     } else if (output.result) {
-      // Result was already forwarded to the user via the streaming callback above
       result = output.result;
     }
 

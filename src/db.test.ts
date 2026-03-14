@@ -67,7 +67,90 @@ describe('storeMessage', () => {
     expect(messages[0].content).toBe('hello world');
   });
 
-  it('filters out empty content', () => {
+  it('stores and retrieves media fields', () => {
+    storeChatMetadata('group@g.us', '2024-01-01T00:00:00.000Z');
+
+    storeMessage({
+      id: 'msg-media',
+      chat_jid: 'group@g.us',
+      sender: '123@s.whatsapp.net',
+      sender_name: 'Alice',
+      content: 'Check this photo',
+      timestamp: '2024-01-01T00:00:02.000Z',
+      media: {
+        type: 'image',
+        mimetype: 'image/jpeg',
+        path: '/groups/test/media/msg-media.jpg',
+        containerPath: '/workspace/group/media/msg-media.jpg',
+        fileName: 'photo.jpg',
+      },
+    });
+
+    const messages = getMessagesSince(
+      'group@g.us',
+      '2024-01-01T00:00:00.000Z',
+      'Andy',
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0].media).toBeDefined();
+    expect(messages[0].media!.type).toBe('image');
+    expect(messages[0].media!.mimetype).toBe('image/jpeg');
+    expect(messages[0].media!.containerPath).toBe(
+      '/workspace/group/media/msg-media.jpg',
+    );
+    expect(messages[0].media!.fileName).toBe('photo.jpg');
+  });
+
+  it('returns undefined media for text-only messages', () => {
+    storeChatMetadata('group@g.us', '2024-01-01T00:00:00.000Z');
+
+    store({
+      id: 'msg-text',
+      chat_jid: 'group@g.us',
+      sender: '123@s.whatsapp.net',
+      sender_name: 'Alice',
+      content: 'just text',
+      timestamp: '2024-01-01T00:00:02.000Z',
+    });
+
+    const messages = getMessagesSince(
+      'group@g.us',
+      '2024-01-01T00:00:00.000Z',
+      'Andy',
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0].media).toBeUndefined();
+  });
+
+  it('includes media-only messages (empty content with media)', () => {
+    storeChatMetadata('group@g.us', '2024-01-01T00:00:00.000Z');
+
+    storeMessage({
+      id: 'msg-media-only',
+      chat_jid: 'group@g.us',
+      sender: '123@s.whatsapp.net',
+      sender_name: 'Alice',
+      content: '',
+      timestamp: '2024-01-01T00:00:02.000Z',
+      media: {
+        type: 'audio',
+        mimetype: 'audio/ogg',
+        path: '/groups/test/media/msg-media-only.ogg',
+        containerPath: '/workspace/group/media/msg-media-only.ogg',
+      },
+    });
+
+    const messages = getMessagesSince(
+      'group@g.us',
+      '2024-01-01T00:00:00.000Z',
+      'Andy',
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBe('');
+    expect(messages[0].media!.type).toBe('audio');
+  });
+
+  it('filters out empty content without media', () => {
     storeChatMetadata('group@g.us', '2024-01-01T00:00:00.000Z');
 
     store({

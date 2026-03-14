@@ -227,6 +227,34 @@ function buildContainerArgs(
     `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
   );
 
+  // Google Workspace CLI credentials (if configured)
+  // Mount to /tmp path (writable) and use a writable config dir for gws cache
+  const gwsCredsPath = path.join(process.cwd(), 'data', 'gws-credentials.json');
+  if (fs.existsSync(gwsCredsPath)) {
+    args.push('-v', `${gwsCredsPath}:/tmp/gws-credentials.json:ro`);
+    args.push(
+      '-e',
+      'GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/tmp/gws-credentials.json',
+    );
+    args.push('-e', 'GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/tmp/gws-config');
+    args.push('-e', 'GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file');
+  }
+
+  // GitHub token for private repo access (if configured)
+  const ghTokenPath = path.join(process.cwd(), 'data', 'github-token');
+  if (fs.existsSync(ghTokenPath)) {
+    const ghToken = fs.readFileSync(ghTokenPath, 'utf-8').trim();
+    args.push('-e', `GITHUB_TOKEN=${ghToken}`);
+    args.push('-e', `GH_TOKEN=${ghToken}`);
+  }
+
+  // Home Assistant token for MCP server access (if configured)
+  const haTokenPath = path.join(process.cwd(), 'data', 'ha-token');
+  if (fs.existsSync(haTokenPath)) {
+    const haToken = fs.readFileSync(haTokenPath, 'utf-8').trim();
+    args.push('-e', `HA_TOKEN=${haToken}`);
+  }
+
   // Mirror the host's auth method with a placeholder value.
   // API key mode: SDK sends x-api-key, proxy replaces with real key.
   // OAuth mode:   SDK exchanges placeholder token for temp API key,

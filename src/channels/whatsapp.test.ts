@@ -6,6 +6,7 @@ import { EventEmitter } from 'events';
 // Mock config
 vi.mock('../config.js', () => ({
   STORE_DIR: '/tmp/nanoclaw-test-store',
+  GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   ASSISTANT_NAME: 'Andy',
   ASSISTANT_HAS_OWN_NUMBER: false,
 }));
@@ -36,6 +37,7 @@ vi.mock('fs', async () => {
       ...actual,
       existsSync: vi.fn(() => true),
       mkdirSync: vi.fn(),
+      writeFileSync: vi.fn(),
     },
   };
 });
@@ -96,6 +98,9 @@ vi.mock('@whiskeysockets/baileys', () => {
       },
       saveCreds: vi.fn(),
     }),
+    downloadMediaMessage: vi
+      .fn()
+      .mockResolvedValue(Buffer.from('fake-media-data')),
   };
 });
 
@@ -533,7 +538,7 @@ describe('WhatsAppChannel', () => {
       );
     });
 
-    it('handles message with no extractable text (e.g. voice note without caption)', async () => {
+    it('delivers media-only messages (e.g. voice note without caption)', async () => {
       const opts = createTestOpts();
       const channel = new WhatsAppChannel(opts);
 
@@ -555,7 +560,173 @@ describe('WhatsAppChannel', () => {
         },
       ]);
 
-      // Skipped — no text content to process
+      // Media messages are now delivered even without text content
+      expect(opts.onMessage).toHaveBeenCalledTimes(1);
+      const msg = (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
+      expect(msg.content).toBe('');
+      expect(msg.media).toBeDefined();
+      expect(msg.media.type).toBe('audio');
+    });
+
+    it('delivers image with caption and media info', async () => {
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-img',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            imageMessage: {
+              caption: 'Check this photo',
+              mimetype: 'image/jpeg',
+            },
+          },
+          pushName: 'Diana',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(opts.onMessage).toHaveBeenCalledTimes(1);
+      const msg = (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
+      expect(msg.content).toBe('Check this photo');
+      expect(msg.media).toBeDefined();
+      expect(msg.media.type).toBe('image');
+      expect(msg.media.mimetype).toBe('image/jpeg');
+      expect(msg.media.containerPath).toMatch(
+        /\/workspace\/group\/media\/msg-img\.jpg$/,
+      );
+    });
+
+    it('delivers document with fileName', async () => {
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-doc',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            documentMessage: {
+              caption: 'Here is the report',
+              mimetype: 'application/pdf',
+              fileName: 'report.pdf',
+            },
+          },
+          pushName: 'Eve',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(opts.onMessage).toHaveBeenCalledTimes(1);
+      const msg = (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
+      expect(msg.content).toBe('Here is the report');
+      expect(msg.media.type).toBe('document');
+      expect(msg.media.mimetype).toBe('application/pdf');
+      expect(msg.media.fileName).toBe('report.pdf');
+      expect(msg.media.containerPath).toMatch(/\.pdf$/);
+    });
+
+    it('delivers sticker as image type', async () => {
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-sticker',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            stickerMessage: { mimetype: 'image/webp' },
+          },
+          pushName: 'Frank',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(opts.onMessage).toHaveBeenCalledTimes(1);
+      const msg = (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
+      expect(msg.media.type).toBe('image');
+      expect(msg.media.mimetype).toBe('image/webp');
+    });
+
+    it('delivers message without media when download fails', async () => {
+      // Make downloadMediaMessage reject
+      const baileys = await import('@whiskeysockets/baileys');
+      (
+        baileys.downloadMediaMessage as ReturnType<typeof vi.fn>
+      ).mockRejectedValueOnce(new Error('Download failed'));
+
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-fail',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            imageMessage: {
+              caption: 'Photo with failed download',
+              mimetype: 'image/jpeg',
+            },
+          },
+          pushName: 'Grace',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      // Message is still delivered, but without media
+      expect(opts.onMessage).toHaveBeenCalledTimes(1);
+      const msg = (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
+      expect(msg.content).toBe('Photo with failed download');
+      expect(msg.media).toBeUndefined();
+    });
+
+    it('skips protocol messages with no content and no media', async () => {
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-protocol',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            protocolMessage: { type: 0 },
+          },
+          pushName: 'System',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
       expect(opts.onMessage).not.toHaveBeenCalled();
     });
 

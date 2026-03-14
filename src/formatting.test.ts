@@ -111,6 +111,88 @@ describe('formatMessages', () => {
     expect(result).toContain('<messages>\n\n</messages>');
   });
 
+  it('formats message with media element', () => {
+    const result = formatMessages(
+      [
+        makeMsg({
+          content: 'Check this photo',
+          media: {
+            type: 'image',
+            mimetype: 'image/jpeg',
+            path: '/host/path/msg.jpg',
+            containerPath: '/workspace/group/media/msg.jpg',
+          },
+        }),
+      ],
+      TZ,
+    );
+    expect(result).toContain('<media type="image"');
+    expect(result).toContain('path="/workspace/group/media/msg.jpg"');
+    expect(result).toContain('mimetype="image/jpeg"');
+    expect(result).toContain('Check this photo');
+  });
+
+  it('formats media-only message (no caption)', () => {
+    const result = formatMessages(
+      [
+        makeMsg({
+          content: '',
+          media: {
+            type: 'audio',
+            mimetype: 'audio/ogg',
+            path: '/host/path/voice.ogg',
+            containerPath: '/workspace/group/media/voice.ogg',
+          },
+        }),
+      ],
+      TZ,
+    );
+    expect(result).toContain('<media type="audio"');
+    expect(result).toContain('path="/workspace/group/media/voice.ogg"');
+    // No caption text should appear
+    expect(result).not.toContain('>audio<');
+  });
+
+  it('includes filename attribute when present', () => {
+    const result = formatMessages(
+      [
+        makeMsg({
+          content: '',
+          media: {
+            type: 'document',
+            mimetype: 'application/pdf',
+            path: '/host/path/doc.pdf',
+            containerPath: '/workspace/group/media/doc.pdf',
+            fileName: 'report.pdf',
+          },
+        }),
+      ],
+      TZ,
+    );
+    expect(result).toContain('filename="report.pdf"');
+  });
+
+  it('escapes special characters in media attributes', () => {
+    const result = formatMessages(
+      [
+        makeMsg({
+          content: '',
+          media: {
+            type: 'document',
+            mimetype: 'application/pdf',
+            path: '/host/path/doc.pdf',
+            containerPath: '/workspace/group/media/doc.pdf',
+            fileName: 'file "with" <special> & chars.pdf',
+          },
+        }),
+      ],
+      TZ,
+    );
+    expect(result).toContain('&amp;');
+    expect(result).toContain('&lt;special&gt;');
+    expect(result).toContain('&quot;with&quot;');
+  });
+
   it('converts timestamps to local time for given timezone', () => {
     // 2024-01-01T18:30:00Z in America/New_York (EST) = 1:30 PM
     const result = formatMessages(

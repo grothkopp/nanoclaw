@@ -42,6 +42,16 @@ export interface RegisteredGroup {
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
 }
 
+export interface NewMessageMedia {
+  type: 'image' | 'audio' | 'video' | 'document';
+  mimetype: string;
+  /** Absolute path to the saved file on the host filesystem */
+  path: string;
+  /** Container-side path where agents can read the file (under /workspace/group/media/) */
+  containerPath: string;
+  fileName?: string;
+}
+
 export interface NewMessage {
   id: string;
   chat_jid: string;
@@ -51,6 +61,7 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  media?: NewMessageMedia;
 }
 
 export interface ScheduledTask {

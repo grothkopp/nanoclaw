@@ -139,6 +139,17 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* columns already exist */
   }
+
+  // Add media columns if they don't exist (migration for existing DBs)
+  try {
+    database.exec(`ALTER TABLE messages ADD COLUMN media_type TEXT`);
+    database.exec(`ALTER TABLE messages ADD COLUMN media_path TEXT`);
+    database.exec(`ALTER TABLE messages ADD COLUMN media_mimetype TEXT`);
+    database.exec(`ALTER TABLE messages ADD COLUMN media_container_path TEXT`);
+    database.exec(`ALTER TABLE messages ADD COLUMN media_filename TEXT`);
+  } catch {
+    /* columns already exist */
+  }
 }
 
 export function initDatabase(): void {
@@ -262,7 +273,7 @@ export function setLastGroupSync(): void {
  */
 export function storeMessage(msg: NewMessage): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, media_type, media_path, media_mimetype, media_container_path, media_filename) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -272,6 +283,11 @@ export function storeMessage(msg: NewMessage): void {
     msg.timestamp,
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
+    msg.media?.type ?? null,
+    msg.media?.path ?? null,
+    msg.media?.mimetype ?? null,
+    msg.media?.containerPath ?? null,
+    msg.media?.fileName ?? null,
   );
 }
 
@@ -316,19 +332,52 @@ export function getNewMessages(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me,
+             media_type, media_path, media_mimetype, media_container_path, media_filename
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
         AND is_bot_message = 0 AND content NOT LIKE ?
-        AND content != '' AND content IS NOT NULL
+        AND (content != '' OR media_type IS NOT NULL)
       ORDER BY timestamp DESC
       LIMIT ?
     ) ORDER BY timestamp
   `;
 
-  const rows = db
+  const rawRows = db
     .prepare(sql)
-    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as NewMessage[];
+    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as Array<{
+    id: string;
+    chat_jid: string;
+    sender: string;
+    sender_name: string;
+    content: string;
+    timestamp: string;
+    is_from_me: number;
+    media_type: string | null;
+    media_path: string | null;
+    media_mimetype: string | null;
+    media_container_path: string | null;
+    media_filename: string | null;
+  }>;
+
+  const rows: NewMessage[] = rawRows.map((row) => ({
+    id: row.id,
+    chat_jid: row.chat_jid,
+    sender: row.sender,
+    sender_name: row.sender_name,
+    content: row.content,
+    timestamp: row.timestamp,
+    is_from_me: row.is_from_me === 1,
+    media: row.media_type
+      ? {
+          type: row.media_type as 'image' | 'audio' | 'video' | 'document',
+          mimetype: row.media_mimetype ?? '',
+          path: row.media_path ?? '',
+          containerPath: row.media_container_path ?? '',
+          fileName: row.media_filename ?? undefined,
+        }
+      : undefined,
+  }));
 
   let newTimestamp = lastTimestamp;
   for (const row of rows) {
@@ -349,18 +398,51 @@ export function getMessagesSince(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me,
+             media_type, media_path, media_mimetype, media_container_path, media_filename
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
         AND is_bot_message = 0 AND content NOT LIKE ?
-        AND content != '' AND content IS NOT NULL
+        AND (content != '' OR media_type IS NOT NULL)
       ORDER BY timestamp DESC
       LIMIT ?
     ) ORDER BY timestamp
   `;
-  return db
+  const rawRows = db
     .prepare(sql)
-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as Array<{
+    id: string;
+    chat_jid: string;
+    sender: string;
+    sender_name: string;
+    content: string;
+    timestamp: string;
+    is_from_me: number;
+    media_type: string | null;
+    media_path: string | null;
+    media_mimetype: string | null;
+    media_container_path: string | null;
+    media_filename: string | null;
+  }>;
+
+  return rawRows.map((row) => ({
+    id: row.id,
+    chat_jid: row.chat_jid,
+    sender: row.sender,
+    sender_name: row.sender_name,
+    content: row.content,
+    timestamp: row.timestamp,
+    is_from_me: row.is_from_me === 1,
+    media: row.media_type
+      ? {
+          type: row.media_type as 'image' | 'audio' | 'video' | 'document',
+          mimetype: row.media_mimetype ?? '',
+          path: row.media_path ?? '',
+          containerPath: row.media_container_path ?? '',
+          fileName: row.media_filename ?? undefined,
+        }
+      : undefined,
+  }));
 }
 
 export function createTask(

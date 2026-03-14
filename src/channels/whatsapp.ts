@@ -10,11 +10,13 @@ import makeWASocket, {
   makeCacheableSignalKeyStore,
   normalizeMessageContent,
   useMultiFileAuthState,
+  downloadMediaMessage,
 } from '@whiskeysockets/baileys';
 
 import {
   ASSISTANT_HAS_OWN_NUMBER,
   ASSISTANT_NAME,
+  GROUPS_DIR,
   STORE_DIR,
 } from '../config.js';
 import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
@@ -24,10 +26,50 @@ import {
   OnInboundMessage,
   OnChatMetadata,
   RegisteredGroup,
+  NewMessageMedia,
 } from '../types.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// Map WhatsApp message types to media type strings
+const MEDIA_TYPE_MAP: Record<string, 'image' | 'audio' | 'video' | 'document'> =
+  {
+    imageMessage: 'image',
+    audioMessage: 'audio',
+    pttMessage: 'audio', // Push-to-talk voice notes
+    videoMessage: 'video',
+    documentMessage: 'document',
+    documentWithCaptionMessage: 'document',
+    stickerMessage: 'image',
+  };
+
+// Map media types to file extensions based on common WhatsApp mimetypes
+function getExtensionForMimetype(mimetype: string): string {
+  const mimeToExt: Record<string, string> = {
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/png': 'png',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+    'video/mp4': 'mp4',
+    'video/mpeg': 'mpeg',
+    'audio/ogg; codecs=opus': 'ogg',
+    'audio/ogg': 'ogg',
+    'audio/mp4': 'mp4',
+    'audio/mpeg': 'mp3',
+    'audio/aac': 'aac',
+    'application/pdf': 'pdf',
+    'application/msword': 'doc',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+      'docx',
+    'application/vnd.ms-excel': 'xls',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  };
+  // Strip parameters (e.g. "audio/ogg; codecs=opus" -> "audio/ogg")
+  const base = mimetype.split(';')[0].trim();
+  return mimeToExt[mimetype] || mimeToExt[base] || base.split('/')[1] || 'bin';
+}
 
 export interface WhatsAppChannelOpts {
   onMessage: OnInboundMessage;
@@ -202,16 +244,47 @@ export class WhatsAppChannel implements Channel {
 
           // Only deliver full message for registered groups
           const groups = this.opts.registeredGroups();
-          if (groups[chatJid]) {
+          const registeredGroup = groups[chatJid];
+          if (registeredGroup) {
+            // Detect media message type
+            const mediaKey = Object.keys(MEDIA_TYPE_MAP).find(
+              (k) => !!(normalized as Record<string, unknown>)[k],
+            );
+            const mediaType = mediaKey ? MEDIA_TYPE_MAP[mediaKey] : undefined;
+
+            // Extract text content (caption for media, text for text messages)
             const content =
               normalized.conversation ||
               normalized.extendedTextMessage?.text ||
               normalized.imageMessage?.caption ||
               normalized.videoMessage?.caption ||
+              normalized.documentMessage?.caption ||
+              normalized.documentWithCaptionMessage?.message?.documentMessage
+                ?.caption ||
               '';
 
-            // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
-            if (!content) continue;
+            // Skip protocol messages with no text content AND no media
+            if (!content && !mediaType) continue;
+
+            // Download and save media if present
+            let mediaInfo: NewMessageMedia | undefined;
+            if (mediaType && mediaKey) {
+              // Extract mimetype and fileName from the already-normalized content
+              const msgContent = (normalized as Record<string, unknown>)[
+                mediaKey
+              ] as Record<string, unknown> | undefined;
+              const mimetype =
+                (msgContent?.mimetype as string) || `${mediaType}/*`;
+              const fileName = (msgContent?.fileName as string) || undefined;
+              mediaInfo = await this.downloadAndSaveMedia(
+                msg,
+                msg.key.id || 'unknown',
+                mediaType,
+                mimetype,
+                fileName,
+                registeredGroup,
+              );
+            }
 
             const sender = msg.key.participant || msg.key.remoteJid || '';
             const senderName = msg.pushName || sender.split('@')[0];
@@ -234,6 +307,7 @@ export class WhatsAppChannel implements Channel {
               timestamp,
               is_from_me: fromMe,
               is_bot_message: isBotMessage,
+              media: mediaInfo,
             });
           }
         } catch (err) {
@@ -244,6 +318,67 @@ export class WhatsAppChannel implements Channel {
         }
       }
     });
+  }
+
+  /**
+   * Download media from a WhatsApp message and save it to the group's media directory.
+   * Returns the media info with host and container paths, or undefined on failure.
+   */
+  private async downloadAndSaveMedia(
+    msg: Parameters<typeof downloadMediaMessage>[0],
+    messageId: string,
+    mediaType: 'image' | 'audio' | 'video' | 'document',
+    mimetype: string,
+    fileName: string | undefined,
+    group: RegisteredGroup,
+  ): Promise<NewMessageMedia | undefined> {
+    try {
+      // Determine file extension
+      const ext = getExtensionForMimetype(mimetype);
+      const filename = `${messageId}.${ext}`;
+
+      // Create media directory in the group folder
+      const groupDir = path.join(GROUPS_DIR, group.folder);
+      const mediaDir = path.join(groupDir, 'media');
+      fs.mkdirSync(mediaDir, { recursive: true });
+
+      const hostPath = path.join(mediaDir, filename);
+      // Container-side path: /workspace/group/media/{filename}
+      const containerPath = `/workspace/group/media/${filename}`;
+
+      // Download the media buffer using Baileys
+      const buffer = await downloadMediaMessage(
+        msg,
+        'buffer',
+        {},
+        {
+          logger,
+          reuploadRequest: this.sock.updateMediaMessage,
+        },
+      );
+
+      fs.writeFileSync(hostPath, buffer as Buffer);
+      logger.info(
+        {
+          messageId,
+          mediaType,
+          path: hostPath,
+          size: (buffer as Buffer).length,
+        },
+        'Media downloaded and saved',
+      );
+
+      return {
+        type: mediaType,
+        mimetype,
+        path: hostPath,
+        containerPath,
+        fileName,
+      };
+    } catch (err) {
+      logger.warn({ err, messageId, mediaType }, 'Failed to download media');
+      return undefined;
+    }
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {

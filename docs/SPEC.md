@@ -522,15 +522,39 @@ Messages must start with the trigger pattern (default: `@Andy`):
 
 ### Conversation Catch-Up
 
-When a triggered message arrives, the agent receives all messages since its last interaction in that chat. Each message is formatted with timestamp and sender name:
+When a triggered message arrives, the agent receives all messages since its last interaction in that chat. Messages are formatted as XML with timezone context:
 
-```
-[Jan 31 2:32 PM] John: hey everyone, should we do pizza tonight?
-[Jan 31 2:33 PM] Sarah: sounds good to me
-[Jan 31 2:35 PM] John: @Andy what toppings do you recommend?
+```xml
+<context timezone="Europe/Berlin" />
+<messages>
+<message sender="John" time="Jan 31, 2:32 PM">hey everyone, should we do pizza tonight?</message>
+<message sender="Sarah" time="Jan 31, 2:33 PM">sounds good to me</message>
+<message sender="John" time="Jan 31, 2:35 PM">@Andy what toppings do you recommend?</message>
+</messages>
 ```
 
 This allows the agent to understand the conversation context even if it wasn't mentioned in every message.
+
+#### Media Attachments
+
+When a message includes media (images, audio, video, documents), the message contains a `<media>` element with the file's container-side path, type, and mimetype. The agent can read the file directly from `/workspace/group/media/`.
+
+```xml
+<message sender="Alice" time="Jan 31, 3:00 PM">
+  <media type="image" path="/workspace/group/media/abc123.jpg" mimetype="image/jpeg" />
+  Check this photo
+</message>
+```
+
+Media-only messages (e.g. voice notes without a caption) are also delivered:
+
+```xml
+<message sender="Bob" time="Jan 31, 3:05 PM">
+  <media type="audio" path="/workspace/group/media/def456.ogg" mimetype="audio/ogg" />
+</message>
+```
+
+Supported media types: `image`, `audio`, `video`, `document`. If media download fails, the message is still delivered with its text content but without the `<media>` element.
 
 ---
 
