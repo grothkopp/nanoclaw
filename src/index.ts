@@ -31,6 +31,7 @@ import {
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
+  getConversationHistory,
   getMessagesSince,
   getNewMessages,
   getRegisteredGroup,
@@ -175,7 +176,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const prompt = formatMessages(missedMessages, TIMEZONE);
+  // Prepend recent conversation history (including bot responses) so the agent
+  // has context for follow-up questions like "what did you mean by that?".
+  // We fetch up to 20 messages before the cursor, giving the agent visibility
+  // into the recent exchange without re-processing already-handled messages.
+  const history = getConversationHistory(chatJid, sinceTimestamp);
+  const contextMessages = history.length > 0
+    ? [...history, ...missedMessages]
+    : missedMessages;
+
+  const prompt = formatMessages(contextMessages, TIMEZONE, ASSISTANT_NAME);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.

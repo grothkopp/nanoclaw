@@ -13,9 +13,13 @@ export function escapeXml(s: string): string {
 export function formatMessages(
   messages: NewMessage[],
   timezone: string,
+  assistantName?: string,
 ): string {
   const lines = messages.map((m) => {
     const displayTime = formatLocalTime(m.timestamp, timezone);
+    // Bot messages use the assistant name so the agent can see its own previous responses
+    const senderDisplay =
+      m.is_bot_message && assistantName ? assistantName : m.sender_name;
     if (m.media) {
       // Build media element with type, path (container-side), and mimetype
       const mediaAttrs = [
@@ -29,9 +33,9 @@ export function formatMessages(
       const mediaEl = `<media ${mediaAttrs.join(' ')} />`;
       const caption = m.content ? escapeXml(m.content) : '';
       const innerContent = caption ? `${mediaEl}\n  ${caption}` : mediaEl;
-      return `<message sender="${escapeXml(m.sender_name)}" time="${escapeXml(displayTime)}">\n  ${innerContent}\n</message>`;
+      return `<message sender="${escapeXml(senderDisplay)}" time="${escapeXml(displayTime)}">\n  ${innerContent}\n</message>`;
     }
-    return `<message sender="${escapeXml(m.sender_name)}" time="${escapeXml(displayTime)}">${escapeXml(m.content)}</message>`;
+    return `<message sender="${escapeXml(senderDisplay)}" time="${escapeXml(displayTime)}">${escapeXml(m.content)}</message>`;
   });
 
   const header = `<context timezone="${escapeXml(timezone)}" />\n`;
