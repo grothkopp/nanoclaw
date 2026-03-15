@@ -645,11 +645,7 @@ describe('getConversationHistory', () => {
 
   it('respects the limit', () => {
     for (let i = 0; i < 5; i++) {
-      storeMsg(
-        `m${i}`,
-        `2024-01-01T10:0${i}:00.000Z`,
-        false,
-      );
+      storeMsg(`m${i}`, `2024-01-01T10:0${i}:00.000Z`, false);
     }
     const cursor = '2024-01-01T10:10:00.000Z';
     const history = getConversationHistory(JID, cursor, 3);

@@ -181,9 +181,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // We fetch up to 20 messages before the cursor, giving the agent visibility
   // into the recent exchange without re-processing already-handled messages.
   const history = getConversationHistory(chatJid, sinceTimestamp);
-  const contextMessages = history.length > 0
-    ? [...history, ...missedMessages]
-    : missedMessages;
+  const contextMessages =
+    history.length > 0 ? [...history, ...missedMessages] : missedMessages;
 
   const prompt = formatMessages(contextMessages, TIMEZONE, ASSISTANT_NAME);
 

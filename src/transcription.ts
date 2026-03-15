@@ -36,7 +36,9 @@ export function isTranscriptionAvailable(): boolean {
  * Transcribe an audio file using Groq's Whisper API.
  * Returns the transcribed text, or null on failure.
  */
-export async function transcribeAudio(filePath: string): Promise<string | null> {
+export async function transcribeAudio(
+  filePath: string,
+): Promise<string | null> {
   const token = getGroqToken();
   if (!token) {
     logger.debug('Groq token not configured, skipping transcription');
@@ -60,7 +62,7 @@ export async function transcribeAudio(filePath: string): Promise<string | null> 
     const response = await fetch(GROQ_API_URL, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${token}`,
+        Authorization: `Bearer ${token}`,
       },
       body: formData,
     });
@@ -74,7 +76,7 @@ export async function transcribeAudio(filePath: string): Promise<string | null> 
       return null;
     }
 
-    const result = await response.json() as { text?: string };
+    const result = (await response.json()) as { text?: string };
     const text = result.text?.trim();
 
     if (text) {
@@ -86,10 +88,7 @@ export async function transcribeAudio(filePath: string): Promise<string | null> 
 
     return text || null;
   } catch (err) {
-    logger.warn(
-      { err, filePath },
-      'Failed to transcribe audio',
-    );
+    logger.warn({ err, filePath }, 'Failed to transcribe audio');
     return null;
   }
 }

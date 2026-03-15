@@ -96,20 +96,32 @@ describe('formatMessages', () => {
   });
 
   it('uses assistantName for bot messages when provided', () => {
-    const botMsg = makeMsg({ sender_name: '', is_bot_message: true, content: 'I am the bot' });
+    const botMsg = makeMsg({
+      sender_name: '',
+      is_bot_message: true,
+      content: 'I am the bot',
+    });
     const result = formatMessages([botMsg], TZ, 'Sven');
     expect(result).toContain('sender="Sven"');
     expect(result).toContain('>I am the bot</message>');
   });
 
   it('falls back to sender_name for bot messages when assistantName not provided', () => {
-    const botMsg = makeMsg({ sender_name: 'MyBot', is_bot_message: true, content: 'hello' });
+    const botMsg = makeMsg({
+      sender_name: 'MyBot',
+      is_bot_message: true,
+      content: 'hello',
+    });
     const result = formatMessages([botMsg], TZ);
     expect(result).toContain('sender="MyBot"');
   });
 
   it('does not override sender_name with assistantName for regular user messages', () => {
-    const userMsg = makeMsg({ sender_name: 'Stefan', is_bot_message: false, content: 'hi' });
+    const userMsg = makeMsg({
+      sender_name: 'Stefan',
+      is_bot_message: false,
+      content: 'hi',
+    });
     const result = formatMessages([userMsg], TZ, 'Sven');
     expect(result).toContain('sender="Stefan"');
   });
