@@ -6,6 +6,7 @@ import {
   deleteTask,
   getAllChats,
   getAllRegisteredGroups,
+  getConversationHistory,
   getMessagesSince,
   getNewMessages,
   getTaskById,
@@ -563,5 +564,103 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+// --- getConversationHistory ---
+
+describe('getConversationHistory', () => {
+  const JID = 'group@g.us';
+
+  beforeEach(() => {
+    storeChatMetadata(JID, '2024-01-01T00:00:00.000Z');
+  });
+
+  function storeMsg(
+    id: string,
+    timestamp: string,
+    isBotMessage: boolean,
+    content = 'hello',
+  ) {
+    storeMessage({
+      id,
+      chat_jid: JID,
+      sender: isBotMessage ? 'bot' : 'user',
+      sender_name: isBotMessage ? 'Bot' : 'Alice',
+      content,
+      timestamp,
+      is_bot_message: isBotMessage,
+    });
+  }
+
+  it('returns empty array when beforeTimestamp is empty', () => {
+    expect(getConversationHistory(JID, '')).toHaveLength(0);
+  });
+
+  it('returns messages (including bot) before the cursor', () => {
+    storeMsg('u1', '2024-01-01T10:00:00.000Z', false);
+    storeMsg('b1', '2024-01-01T10:01:00.000Z', true);
+    const cursor = '2024-01-01T10:02:00.000Z';
+
+    const history = getConversationHistory(JID, cursor);
+    expect(history).toHaveLength(2);
+    expect(history[0].id).toBe('u1');
+    expect(history[0].is_bot_message).toBe(false);
+    expect(history[1].id).toBe('b1');
+    expect(history[1].is_bot_message).toBe(true);
+  });
+
+  it('excludes messages at or after the cursor timestamp', () => {
+    storeMsg('u1', '2024-01-01T10:00:00.000Z', false);
+    storeMsg('u2', '2024-01-01T10:05:00.000Z', false); // at cursor — excluded
+    const cursor = '2024-01-01T10:05:00.000Z';
+
+    const history = getConversationHistory(JID, cursor);
+    expect(history).toHaveLength(1);
+    expect(history[0].id).toBe('u1');
+  });
+
+  it('excludes messages older than maxAgeMs', () => {
+    // 3 hours before cursor — should be excluded with default 2h window
+    storeMsg('old', '2024-01-01T07:00:00.000Z', false);
+    // 1 hour before cursor — within window
+    storeMsg('recent', '2024-01-01T09:00:00.000Z', false);
+    const cursor = '2024-01-01T10:00:00.000Z';
+
+    const history = getConversationHistory(JID, cursor);
+    expect(history).toHaveLength(1);
+    expect(history[0].id).toBe('recent');
+  });
+
+  it('respects custom maxAgeMs', () => {
+    storeMsg('m1', '2024-01-01T09:50:00.000Z', false);
+    storeMsg('m2', '2024-01-01T09:55:00.000Z', false);
+    const cursor = '2024-01-01T10:00:00.000Z';
+
+    // Only last 6 minutes
+    const history = getConversationHistory(JID, cursor, 20, 6 * 60 * 1000);
+    expect(history).toHaveLength(1);
+    expect(history[0].id).toBe('m2');
+  });
+
+  it('respects the limit', () => {
+    for (let i = 0; i < 5; i++) {
+      storeMsg(`m${i}`, `2024-01-01T10:0${i}:00.000Z`, false);
+    }
+    const cursor = '2024-01-01T10:10:00.000Z';
+    const history = getConversationHistory(JID, cursor, 3);
+    // Returns the 3 most recent before the cursor
+    expect(history).toHaveLength(3);
+    expect(history[history.length - 1].id).toBe('m4');
+  });
+
+  it('returns messages in chronological order', () => {
+    storeMsg('b1', '2024-01-01T10:01:00.000Z', true);
+    storeMsg('u1', '2024-01-01T10:00:00.000Z', false);
+    const cursor = '2024-01-01T10:02:00.000Z';
+
+    const history = getConversationHistory(JID, cursor);
+    expect(history[0].id).toBe('u1');
+    expect(history[1].id).toBe('b1');
   });
 });

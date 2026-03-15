@@ -445,6 +445,77 @@ export function getMessagesSince(
   }));
 }
 
+/**
+ * Get recent conversation history including bot messages, up to (but not including)
+ * beforeTimestamp. Used to provide context for follow-up questions so the agent
+ * has its own previous responses available when processing a new message.
+ *
+ * Only returns messages from the last maxAgeMs (default: 2 hours) to avoid
+ * pulling in stale context from much earlier in the day.
+ */
+export function getConversationHistory(
+  chatJid: string,
+  beforeTimestamp: string,
+  limit: number = 20,
+  maxAgeMs: number = 2 * 60 * 60 * 1000,
+): NewMessage[] {
+  if (!beforeTimestamp) return [];
+
+  const cutoff = new Date(
+    new Date(beforeTimestamp).getTime() - maxAgeMs,
+  ).toISOString();
+
+  const sql = `
+    SELECT * FROM (
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message,
+             media_type, media_path, media_mimetype, media_container_path, media_filename
+      FROM messages
+      WHERE chat_jid = ? AND timestamp < ? AND timestamp >= ?
+        AND (content != '' OR media_type IS NOT NULL)
+      ORDER BY timestamp DESC
+      LIMIT ?
+    ) ORDER BY timestamp
+  `;
+
+  const rawRows = db
+    .prepare(sql)
+    .all(chatJid, beforeTimestamp, cutoff, limit) as Array<{
+    id: string;
+    chat_jid: string;
+    sender: string;
+    sender_name: string;
+    content: string;
+    timestamp: string;
+    is_from_me: number;
+    is_bot_message: number;
+    media_type: string | null;
+    media_path: string | null;
+    media_mimetype: string | null;
+    media_container_path: string | null;
+    media_filename: string | null;
+  }>;
+
+  return rawRows.map((row) => ({
+    id: row.id,
+    chat_jid: row.chat_jid,
+    sender: row.sender,
+    sender_name: row.sender_name,
+    content: row.content,
+    timestamp: row.timestamp,
+    is_from_me: row.is_from_me === 1,
+    is_bot_message: row.is_bot_message === 1,
+    media: row.media_type
+      ? {
+          type: row.media_type as 'image' | 'audio' | 'video' | 'document',
+          mimetype: row.media_mimetype ?? '',
+          path: row.media_path ?? '',
+          containerPath: row.media_container_path ?? '',
+          fileName: row.media_filename ?? undefined,
+        }
+      : undefined,
+  }));
+}
+
 export function createTask(
   task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
 ): void {
