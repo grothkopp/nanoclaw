@@ -6,6 +6,7 @@ import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import { readEnvFile } from './env.js';
 import {
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
@@ -253,6 +254,12 @@ function buildContainerArgs(
   if (fs.existsSync(haTokenPath)) {
     const haToken = fs.readFileSync(haTokenPath, 'utf-8').trim();
     args.push('-e', `HA_TOKEN=${haToken}`);
+  }
+
+  // Model override from .env (ANTHROPIC_MODEL → CLAUDE_MODEL inside container)
+  const { ANTHROPIC_MODEL } = readEnvFile(['ANTHROPIC_MODEL']);
+  if (ANTHROPIC_MODEL) {
+    args.push('-e', `CLAUDE_MODEL=${ANTHROPIC_MODEL}`);
   }
 
   // Mirror the host's auth method with a placeholder value.
