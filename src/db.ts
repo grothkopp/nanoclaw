@@ -217,7 +217,9 @@ export function migrateWhatsAppJids(instanceName: string): number {
 
     // Migrate router_state (last_agent_timestamp JSON)
     const agentTs = db
-      .prepare(`SELECT value FROM router_state WHERE key = 'last_agent_timestamp'`)
+      .prepare(
+        `SELECT value FROM router_state WHERE key = 'last_agent_timestamp'`,
+      )
       .get() as { value: string } | undefined;
     if (agentTs?.value) {
       try {
@@ -244,7 +246,6 @@ export function migrateWhatsAppJids(instanceName: string): number {
         /* ignore malformed JSON */
       }
     }
-
   });
 
   txn();

@@ -65,10 +65,31 @@ async function listGroups(limit: number): Promise<void> {
 
 async function syncGroups(projectRoot: string): Promise<void> {
   // Only WhatsApp needs an upfront group sync; other channels resolve names at runtime.
-  // Detect WhatsApp by checking for auth credentials on disk.
-  const authDir = path.join(projectRoot, 'store', 'auth');
-  const hasWhatsAppAuth =
-    fs.existsSync(authDir) && fs.readdirSync(authDir).length > 0;
+  // Detect WhatsApp by checking for auth credentials across all configured instances.
+  let syncAuthDir = '';
+  const waConfigPath = path.join(projectRoot, 'data', 'whatsapp-instances.json');
+  if (fs.existsSync(waConfigPath)) {
+    try {
+      const instances = JSON.parse(fs.readFileSync(waConfigPath, 'utf-8'));
+      if (Array.isArray(instances)) {
+        for (const inst of instances) {
+          const dir = path.join(projectRoot, 'store', inst.authDir ?? `auth-${inst.name}`);
+          if (fs.existsSync(dir) && fs.readdirSync(dir).length > 0) {
+            syncAuthDir = inst.authDir ?? `auth-${inst.name}`;
+            break;
+          }
+        }
+      }
+    } catch { /* fall through */ }
+  }
+  // Legacy fallback
+  if (!syncAuthDir) {
+    const legacyDir = path.join(projectRoot, 'store', 'auth');
+    if (fs.existsSync(legacyDir) && fs.readdirSync(legacyDir).length > 0) {
+      syncAuthDir = 'auth';
+    }
+  }
+  const hasWhatsAppAuth = !!syncAuthDir;
 
   if (!hasWhatsAppAuth) {
     logger.info('WhatsApp auth not found — skipping group sync');
@@ -118,7 +139,7 @@ import fs from 'fs';
 import Database from 'better-sqlite3';
 
 const logger = pino({ level: 'silent' });
-const authDir = path.join('store', 'auth');
+const authDir = path.join('store', '${syncAuthDir}');
 const dbPath = path.join('store', 'messages.db');
 
 if (!fs.existsSync(authDir)) {

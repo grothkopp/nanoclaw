@@ -109,7 +109,11 @@ vi.mock('@whiskeysockets/baileys', () => {
   };
 });
 
-import { WhatsAppChannel, WhatsAppChannelOpts, WhatsAppInstanceConfig } from './whatsapp.js';
+import {
+  WhatsAppChannel,
+  WhatsAppChannelOpts,
+  WhatsAppInstanceConfig,
+} from './whatsapp.js';
 
 const TEST_INSTANCE: WhatsAppInstanceConfig = {
   name: 'test',
@@ -1008,8 +1012,14 @@ describe('WhatsAppChannel', () => {
       await new Promise((r) => setTimeout(r, 50));
 
       expect(fakeSocket.groupFetchAllParticipating).toHaveBeenCalled();
-      expect(updateChatName).toHaveBeenCalledWith('wa:test:group1@g.us', 'Group One');
-      expect(updateChatName).toHaveBeenCalledWith('wa:test:group2@g.us', 'Group Two');
+      expect(updateChatName).toHaveBeenCalledWith(
+        'wa:test:group1@g.us',
+        'Group One',
+      );
+      expect(updateChatName).toHaveBeenCalledWith(
+        'wa:test:group2@g.us',
+        'Group Two',
+      );
       expect(setLastGroupSync).toHaveBeenCalled();
     });
 
@@ -1046,7 +1056,10 @@ describe('WhatsAppChannel', () => {
       await channel.syncGroupMetadata(true);
 
       expect(fakeSocket.groupFetchAllParticipating).toHaveBeenCalled();
-      expect(updateChatName).toHaveBeenCalledWith('wa:test:group@g.us', 'Forced Group');
+      expect(updateChatName).toHaveBeenCalledWith(
+        'wa:test:group@g.us',
+        'Forced Group',
+      );
     });
 
     it('handles group sync failure gracefully', async () => {
@@ -1081,7 +1094,10 @@ describe('WhatsAppChannel', () => {
       await channel.syncGroupMetadata(true);
 
       expect(updateChatName).toHaveBeenCalledTimes(1);
-      expect(updateChatName).toHaveBeenCalledWith('wa:test:group1@g.us', 'Has Subject');
+      expect(updateChatName).toHaveBeenCalledWith(
+        'wa:test:group1@g.us',
+        'Has Subject',
+      );
     });
   });
 
@@ -1183,12 +1199,18 @@ describe('WhatsAppChannel', () => {
         ...TEST_INSTANCE,
         containerConfig: {
           additionalMounts: [
-            { hostPath: '/path/to/project', containerPath: 'project', readonly: false },
+            {
+              hostPath: '/path/to/project',
+              containerPath: 'project',
+              readonly: false,
+            },
           ],
         },
       };
       const channel = new WhatsAppChannel(createTestOpts(), config);
-      expect(channel.getDefaultContainerConfig()).toEqual(config.containerConfig);
+      expect(channel.getDefaultContainerConfig()).toEqual(
+        config.containerConfig,
+      );
     });
 
     it('returns undefined container config when not set', () => {

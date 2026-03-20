@@ -4,7 +4,10 @@
  * Run this during setup to authenticate with WhatsApp.
  * Displays QR code, waits for scan, saves credentials, then exits.
  *
- * Usage: npx tsx src/whatsapp-auth.ts
+ * Usage:
+ *   npx tsx src/whatsapp-auth.ts                          # legacy (uses store/auth)
+ *   npx tsx src/whatsapp-auth.ts --instance personal      # multi-instance
+ *   npx tsx src/whatsapp-auth.ts --auth-dir auth-work     # explicit auth dir
  */
 import fs from 'fs';
 import path from 'path';
@@ -20,9 +23,12 @@ import makeWASocket, {
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 
-const AUTH_DIR = './store/auth';
-const QR_FILE = './store/qr-data.txt';
-const STATUS_FILE = './store/auth-status.txt';
+import { resolveAuthDir } from './whatsapp-auth-utils.js';
+
+const authDirName = resolveAuthDir(process.argv);
+const AUTH_DIR = `./store/${authDirName}`;
+const QR_FILE = `./store/qr-data-${authDirName}.txt`;
+const STATUS_FILE = `./store/auth-status-${authDirName}.txt`;
 
 const logger = pino({
   level: 'warn', // Quiet logging - only show errors
@@ -55,7 +61,7 @@ async function connectSocket(
     fs.writeFileSync(STATUS_FILE, 'already_authenticated');
     console.log('✓ Already authenticated with WhatsApp');
     console.log(
-      '  To re-authenticate, delete the store/auth folder and run again.',
+      `  To re-authenticate, delete ${AUTH_DIR} and run again.`,
     );
     process.exit(0);
   }
@@ -115,7 +121,7 @@ async function connectSocket(
 
       if (reason === DisconnectReason.loggedOut) {
         fs.writeFileSync(STATUS_FILE, 'failed:logged_out');
-        console.log('\n✗ Logged out. Delete store/auth and try again.');
+        console.log(`\n✗ Logged out. Delete ${AUTH_DIR} and try again.`);
         process.exit(1);
       } else if (reason === DisconnectReason.timedOut) {
         fs.writeFileSync(STATUS_FILE, 'failed:qr_timeout');
@@ -140,7 +146,7 @@ async function connectSocket(
         fs.unlinkSync(QR_FILE);
       } catch {}
       console.log('\n✓ Successfully authenticated with WhatsApp!');
-      console.log('  Credentials saved to store/auth/');
+      console.log(`  Credentials saved to ${AUTH_DIR}/`);
       console.log('  You can now start the NanoClaw service.\n');
 
       // Give it a moment to save credentials, then exit
@@ -169,7 +175,7 @@ async function authenticate(): Promise<void> {
     );
   }
 
-  console.log('Starting WhatsApp authentication...\n');
+  console.log(`Starting WhatsApp authentication (auth dir: ${authDirName})...\n`);
 
   await connectSocket(phoneNumber);
 }

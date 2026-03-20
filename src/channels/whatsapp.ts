@@ -13,12 +13,7 @@ import makeWASocket, {
   downloadMediaMessage,
 } from '@whiskeysockets/baileys';
 
-import {
-  ASSISTANT_NAME,
-  DATA_DIR,
-  GROUPS_DIR,
-  STORE_DIR,
-} from '../config.js';
+import { ASSISTANT_NAME, DATA_DIR, GROUPS_DIR, STORE_DIR } from '../config.js';
 import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
 import { logger } from '../logger.js';
 import {
@@ -107,7 +102,10 @@ export class WhatsAppChannel implements Channel {
 
   private opts: WhatsAppChannelOpts;
 
-  constructor(opts: WhatsAppChannelOpts, instanceConfig: WhatsAppInstanceConfig) {
+  constructor(
+    opts: WhatsAppChannelOpts,
+    instanceConfig: WhatsAppInstanceConfig,
+  ) {
     this.opts = opts;
     this.instanceName = instanceConfig.name;
     this.jidPrefix = `wa:${instanceConfig.name}:`;
@@ -446,9 +444,7 @@ export class WhatsAppChannel implements Channel {
     // On a shared number, prefix is also needed in DMs (including self-chat)
     // to distinguish bot output from user messages.
     // Skip only when the assistant has its own dedicated phone number.
-    const prefixed = this.hasOwnNumber
-      ? text
-      : `${ASSISTANT_NAME}: ${text}`;
+    const prefixed = this.hasOwnNumber ? text : `${ASSISTANT_NAME}: ${text}`;
 
     if (!this.connected) {
       this.outgoingQueue.push({ jid, text: prefixed });
@@ -611,7 +607,10 @@ function loadWhatsAppInstances(): WhatsAppInstanceConfig[] {
         return raw as WhatsAppInstanceConfig[];
       }
     } catch (err) {
-      logger.error({ err, configPath }, 'Failed to parse whatsapp-instances.json');
+      logger.error(
+        { err, configPath },
+        'Failed to parse whatsapp-instances.json',
+      );
     }
   }
 

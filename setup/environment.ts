@@ -42,8 +42,28 @@ export async function run(_args: string[]): Promise<void> {
   // Check existing config
   const hasEnv = fs.existsSync(path.join(projectRoot, '.env'));
 
-  const authDir = path.join(projectRoot, 'store', 'auth');
-  const hasAuth = fs.existsSync(authDir) && fs.readdirSync(authDir).length > 0;
+  // Check for WhatsApp auth across all configured instances
+  let hasAuth = false;
+  const waConfigPath = path.join(projectRoot, 'data', 'whatsapp-instances.json');
+  if (fs.existsSync(waConfigPath)) {
+    try {
+      const instances = JSON.parse(fs.readFileSync(waConfigPath, 'utf-8'));
+      if (Array.isArray(instances)) {
+        for (const inst of instances) {
+          const dir = path.join(projectRoot, 'store', inst.authDir ?? `auth-${inst.name}`);
+          if (fs.existsSync(dir) && fs.readdirSync(dir).length > 0) {
+            hasAuth = true;
+            break;
+          }
+        }
+      }
+    } catch { /* fall through */ }
+  }
+  // Legacy fallback: check store/auth
+  if (!hasAuth) {
+    const authDir = path.join(projectRoot, 'store', 'auth');
+    hasAuth = fs.existsSync(authDir) && fs.readdirSync(authDir).length > 0;
+  }
 
   let hasRegisteredGroups = false;
   // Check JSON file first (pre-migration)
