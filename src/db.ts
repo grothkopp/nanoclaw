@@ -123,7 +123,7 @@ function createSchema(database: Database.Database): void {
   try {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
     database.exec(`ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`);
-    // Backfill from JID patterns
+    // Backfill from JID patterns (both legacy and instance-prefixed formats)
     database.exec(
       `UPDATE chats SET channel = 'whatsapp', is_group = 1 WHERE jid LIKE '%@g.us'`,
     );
@@ -161,6 +161,105 @@ export function initDatabase(): void {
 
   // Migrate from JSON files if they exist
   migrateJsonState();
+}
+
+/**
+ * Migrate legacy WhatsApp JIDs to instance-prefixed format.
+ * Converts bare JIDs (e.g. "number@g.us") to "wa:{instance}:number@g.us"
+ * across all tables. Idempotent — skips JIDs already prefixed with "wa:".
+ */
+export function migrateWhatsAppJids(instanceName: string): number {
+  const prefix = `wa:${instanceName}:`;
+  let migrated = 0;
+
+  // Temporarily disable FK checks for the migration
+  db.pragma('foreign_keys = OFF');
+
+  const txn = db.transaction(() => {
+    // Migrate chats table
+    const chats = db
+      .prepare(
+        `SELECT jid FROM chats WHERE (jid LIKE '%@g.us' OR jid LIKE '%@s.whatsapp.net') AND jid NOT LIKE 'wa:%'`,
+      )
+      .all() as Array<{ jid: string }>;
+
+    for (const { jid } of chats) {
+      const newJid = `${prefix}${jid}`;
+      // Update chats PK first, then messages FK
+      db.prepare(`UPDATE chats SET jid = ? WHERE jid = ?`).run(newJid, jid);
+      db.prepare(`UPDATE messages SET chat_jid = ? WHERE chat_jid = ?`).run(
+        newJid,
+        jid,
+      );
+      migrated++;
+    }
+
+    // Migrate registered_groups table
+    const groups = db
+      .prepare(
+        `SELECT jid FROM registered_groups WHERE (jid LIKE '%@g.us' OR jid LIKE '%@s.whatsapp.net') AND jid NOT LIKE 'wa:%'`,
+      )
+      .all() as Array<{ jid: string }>;
+
+    for (const { jid } of groups) {
+      const newJid = `${prefix}${jid}`;
+      db.prepare(`UPDATE registered_groups SET jid = ? WHERE jid = ?`).run(
+        newJid,
+        jid,
+      );
+      migrated++;
+    }
+
+    // Migrate scheduled_tasks table
+    db.prepare(
+      `UPDATE scheduled_tasks SET chat_jid = '${prefix}' || chat_jid WHERE (chat_jid LIKE '%@g.us' OR chat_jid LIKE '%@s.whatsapp.net') AND chat_jid NOT LIKE 'wa:%'`,
+    ).run();
+
+    // Migrate router_state (last_agent_timestamp JSON)
+    const agentTs = db
+      .prepare(`SELECT value FROM router_state WHERE key = 'last_agent_timestamp'`)
+      .get() as { value: string } | undefined;
+    if (agentTs?.value) {
+      try {
+        const parsed = JSON.parse(agentTs.value) as Record<string, string>;
+        const updated: Record<string, string> = {};
+        let changed = false;
+        for (const [k, v] of Object.entries(parsed)) {
+          if (
+            (k.endsWith('@g.us') || k.endsWith('@s.whatsapp.net')) &&
+            !k.startsWith('wa:')
+          ) {
+            updated[`${prefix}${k}`] = v;
+            changed = true;
+          } else {
+            updated[k] = v;
+          }
+        }
+        if (changed) {
+          db.prepare(
+            `UPDATE router_state SET value = ? WHERE key = 'last_agent_timestamp'`,
+          ).run(JSON.stringify(updated));
+        }
+      } catch {
+        /* ignore malformed JSON */
+      }
+    }
+
+  });
+
+  txn();
+
+  // Re-enable FK checks
+  db.pragma('foreign_keys = ON');
+
+  if (migrated > 0) {
+    logger.info(
+      { instanceName, migrated },
+      'Migrated legacy WhatsApp JIDs to instance-prefixed format',
+    );
+  }
+
+  return migrated;
 }
 
 /** @internal - for tests only. Creates a fresh in-memory database. */

@@ -14,8 +14,8 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 
 import {
-  ASSISTANT_HAS_OWN_NUMBER,
   ASSISTANT_NAME,
+  DATA_DIR,
   GROUPS_DIR,
   STORE_DIR,
 } from '../config.js';
@@ -23,6 +23,7 @@ import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
 import { logger } from '../logger.js';
 import {
   Channel,
+  ContainerConfig,
   OnInboundMessage,
   OnChatMetadata,
   RegisteredGroup,
@@ -72,6 +73,17 @@ function getExtensionForMimetype(mimetype: string): string {
   return mimeToExt[mimetype] || mimeToExt[base] || base.split('/')[1] || 'bin';
 }
 
+export interface WhatsAppInstanceConfig {
+  /** Unique name for this instance (e.g. "personal", "work"). Used in JIDs and folder names. */
+  name: string;
+  /** Whether the bot has its own dedicated phone number (affects message prefixing and bot detection) */
+  hasOwnNumber?: boolean;
+  /** Auth directory name relative to store/ (defaults to "auth-{name}", use "auth" for legacy) */
+  authDir?: string;
+  /** Default container config applied to groups registered under this instance */
+  containerConfig?: ContainerConfig;
+}
+
 export interface WhatsAppChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
@@ -79,8 +91,13 @@ export interface WhatsAppChannelOpts {
 }
 
 export class WhatsAppChannel implements Channel {
-  name = 'whatsapp';
+  name: string;
 
+  private instanceName: string;
+  private jidPrefix: string;
+  private hasOwnNumber: boolean;
+  private authDirName: string;
+  private defaultContainerConfig?: ContainerConfig;
   private sock!: WASocket;
   private connected = false;
   private lidToPhoneMap: Record<string, string> = {};
@@ -90,8 +107,34 @@ export class WhatsAppChannel implements Channel {
 
   private opts: WhatsAppChannelOpts;
 
-  constructor(opts: WhatsAppChannelOpts) {
+  constructor(opts: WhatsAppChannelOpts, instanceConfig: WhatsAppInstanceConfig) {
     this.opts = opts;
+    this.instanceName = instanceConfig.name;
+    this.jidPrefix = `wa:${instanceConfig.name}:`;
+    this.hasOwnNumber = instanceConfig.hasOwnNumber ?? false;
+    this.authDirName = instanceConfig.authDir ?? `auth-${instanceConfig.name}`;
+    this.defaultContainerConfig = instanceConfig.containerConfig;
+    this.name = `wa:${instanceConfig.name}`;
+  }
+
+  /** Returns the default containerConfig for groups registered under this instance */
+  getDefaultContainerConfig(): ContainerConfig | undefined {
+    return this.defaultContainerConfig;
+  }
+
+  /** Returns the instance name */
+  getInstanceName(): string {
+    return this.instanceName;
+  }
+
+  /** Convert a raw WhatsApp JID to an instance-prefixed JID */
+  private toInstanceJid(rawJid: string): string {
+    return `${this.jidPrefix}${rawJid}`;
+  }
+
+  /** Strip instance prefix to get raw WhatsApp JID for Baileys API calls */
+  private toRawJid(instanceJid: string): string {
+    return instanceJid.replace(this.jidPrefix, '');
   }
 
   async connect(): Promise<void> {
@@ -101,7 +144,7 @@ export class WhatsAppChannel implements Channel {
   }
 
   private async connectInternal(onFirstOpen?: () => void): Promise<void> {
-    const authDir = path.join(STORE_DIR, 'auth');
+    const authDir = path.join(STORE_DIR, this.authDirName);
     fs.mkdirSync(authDir, { recursive: true });
 
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
@@ -130,7 +173,7 @@ export class WhatsAppChannel implements Channel {
       if (qr) {
         const msg =
           'WhatsApp authentication required. Run /setup in Claude Code.';
-        logger.error(msg);
+        logger.error({ instance: this.instanceName }, msg);
         exec(
           `osascript -e 'display notification "${msg}" with title "NanoClaw" sound name "Basso"'`,
         );
@@ -145,6 +188,7 @@ export class WhatsAppChannel implements Channel {
         const shouldReconnect = reason !== DisconnectReason.loggedOut;
         logger.info(
           {
+            instance: this.instanceName,
             reason,
             shouldReconnect,
             queuedMessages: this.outgoingQueue.length,
@@ -153,7 +197,7 @@ export class WhatsAppChannel implements Channel {
         );
 
         if (shouldReconnect) {
-          logger.info('Reconnecting...');
+          logger.info({ instance: this.instanceName }, 'Reconnecting...');
           this.connectInternal().catch((err) => {
             logger.error({ err }, 'Failed to reconnect, retrying in 5s');
             setTimeout(() => {
@@ -168,7 +212,7 @@ export class WhatsAppChannel implements Channel {
         }
       } else if (connection === 'open') {
         this.connected = true;
-        logger.info('Connected to WhatsApp');
+        logger.info({ instance: this.instanceName }, 'Connected to WhatsApp');
 
         // Announce availability so WhatsApp relays subsequent presence updates (typing indicators)
         this.sock.sendPresenceUpdate('available').catch((err) => {
@@ -227,14 +271,16 @@ export class WhatsAppChannel implements Channel {
           if (!rawJid || rawJid === 'status@broadcast') continue;
 
           // Translate LID JID to phone JID if applicable
-          const chatJid = await this.translateJid(rawJid);
+          const rawChatJid = await this.translateJid(rawJid);
+          // Prefix with instance namespace
+          const chatJid = this.toInstanceJid(rawChatJid);
 
           const timestamp = new Date(
             Number(msg.messageTimestamp) * 1000,
           ).toISOString();
 
           // Always notify about chat metadata for group discovery
-          const isGroup = chatJid.endsWith('@g.us');
+          const isGroup = rawChatJid.endsWith('@g.us');
           this.opts.onChatMetadata(
             chatJid,
             timestamp,
@@ -305,7 +351,7 @@ export class WhatsAppChannel implements Channel {
             // since only the bot sends from that number.
             // With shared number, bot messages carry the assistant name prefix
             // (even in DMs/self-chat) so we check for that.
-            const isBotMessage = ASSISTANT_HAS_OWN_NUMBER
+            const isBotMessage = this.hasOwnNumber
               ? fromMe
               : content.startsWith(`${ASSISTANT_NAME}:`);
 
@@ -393,11 +439,14 @@ export class WhatsAppChannel implements Channel {
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
+    // Strip instance prefix to get raw WhatsApp JID for Baileys
+    const rawJid = this.toRawJid(jid);
+
     // Prefix bot messages with assistant name so users know who's speaking.
     // On a shared number, prefix is also needed in DMs (including self-chat)
     // to distinguish bot output from user messages.
     // Skip only when the assistant has its own dedicated phone number.
-    const prefixed = ASSISTANT_HAS_OWN_NUMBER
+    const prefixed = this.hasOwnNumber
       ? text
       : `${ASSISTANT_NAME}: ${text}`;
 
@@ -410,7 +459,7 @@ export class WhatsAppChannel implements Channel {
       return;
     }
     try {
-      await this.sock.sendMessage(jid, { text: prefixed });
+      await this.sock.sendMessage(rawJid, { text: prefixed });
       logger.info({ jid, length: prefixed.length }, 'Message sent');
     } catch (err) {
       // If send fails, queue it for retry on reconnect
@@ -427,7 +476,7 @@ export class WhatsAppChannel implements Channel {
   }
 
   ownsJid(jid: string): boolean {
-    return jid.endsWith('@g.us') || jid.endsWith('@s.whatsapp.net');
+    return jid.startsWith(this.jidPrefix);
   }
 
   async disconnect(): Promise<void> {
@@ -437,9 +486,10 @@ export class WhatsAppChannel implements Channel {
 
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
     try {
+      const rawJid = this.toRawJid(jid);
       const status = isTyping ? 'composing' : 'paused';
       logger.debug({ jid, status }, 'Sending presence update');
-      await this.sock.sendPresenceUpdate(status, jid);
+      await this.sock.sendPresenceUpdate(status, rawJid);
     } catch (err) {
       logger.debug({ jid, err }, 'Failed to update typing status');
     }
@@ -467,19 +517,25 @@ export class WhatsAppChannel implements Channel {
     }
 
     try {
-      logger.info('Syncing group metadata from WhatsApp...');
+      logger.info(
+        { instance: this.instanceName },
+        'Syncing group metadata from WhatsApp...',
+      );
       const groups = await this.sock.groupFetchAllParticipating();
 
       let count = 0;
-      for (const [jid, metadata] of Object.entries(groups)) {
+      for (const [rawJid, metadata] of Object.entries(groups)) {
         if (metadata.subject) {
-          updateChatName(jid, metadata.subject);
+          updateChatName(this.toInstanceJid(rawJid), metadata.subject);
           count++;
         }
       }
 
       setLastGroupSync();
-      logger.info({ count }, 'Group metadata synced');
+      logger.info(
+        { instance: this.instanceName, count },
+        'Group metadata synced',
+      );
     } catch (err) {
       logger.error({ err }, 'Failed to sync group metadata');
     }
@@ -528,8 +584,9 @@ export class WhatsAppChannel implements Channel {
       );
       while (this.outgoingQueue.length > 0) {
         const item = this.outgoingQueue.shift()!;
+        const rawJid = this.toRawJid(item.jid);
         // Send directly — queued items are already prefixed by sendMessage
-        await this.sock.sendMessage(item.jid, { text: item.text });
+        await this.sock.sendMessage(rawJid, { text: item.text });
         logger.info(
           { jid: item.jid, length: item.text.length },
           'Queued message sent',
@@ -541,4 +598,46 @@ export class WhatsAppChannel implements Channel {
   }
 }
 
-registerChannel('whatsapp', (opts: ChannelOpts) => new WhatsAppChannel(opts));
+/**
+ * Load WhatsApp instance configurations from data/whatsapp-instances.json.
+ */
+function loadWhatsAppInstances(): WhatsAppInstanceConfig[] {
+  const configPath = path.join(DATA_DIR, 'whatsapp-instances.json');
+
+  if (fs.existsSync(configPath)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      if (Array.isArray(raw) && raw.length > 0) {
+        return raw as WhatsAppInstanceConfig[];
+      }
+    } catch (err) {
+      logger.error({ err, configPath }, 'Failed to parse whatsapp-instances.json');
+    }
+  }
+
+  return [];
+}
+
+// Register a factory per WhatsApp instance.
+// Each instance gets its own channel named "wa:{instanceName}".
+const instances = loadWhatsAppInstances();
+
+if (instances.length > 0) {
+  for (const instance of instances) {
+    if (!instance.name) {
+      logger.warn('WhatsApp instance missing required "name" field — skipping');
+      continue;
+    }
+    registerChannel(`wa:${instance.name}`, (opts: ChannelOpts) => {
+      return new WhatsAppChannel(opts, instance);
+    });
+  }
+} else {
+  // No instances configured
+  registerChannel('whatsapp', () => {
+    logger.warn(
+      'WhatsApp: No instances configured. Create data/whatsapp-instances.json.',
+    );
+    return null;
+  });
+}

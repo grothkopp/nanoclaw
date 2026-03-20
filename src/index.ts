@@ -37,6 +37,7 @@ import {
   getRegisteredGroup,
   getRouterState,
   initDatabase,
+  migrateWhatsAppJids,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -478,6 +479,21 @@ async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
+
+  // Migrate legacy WhatsApp JIDs to instance-prefixed format.
+  // Reads the first instance name from whatsapp-instances.json.
+  try {
+    const waConfigPath = path.join(process.cwd(), 'data', 'whatsapp-instances.json');
+    if (fs.existsSync(waConfigPath)) {
+      const waInstances = JSON.parse(fs.readFileSync(waConfigPath, 'utf-8'));
+      if (Array.isArray(waInstances) && waInstances.length > 0 && waInstances[0].name) {
+        migrateWhatsAppJids(waInstances[0].name);
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, 'WhatsApp JID migration check failed (non-fatal)');
+  }
+
   loadState();
 
   // Start credential proxy (containers route API calls through this)

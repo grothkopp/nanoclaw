@@ -7,8 +7,8 @@ import { EventEmitter } from 'events';
 vi.mock('../config.js', () => ({
   STORE_DIR: '/tmp/nanoclaw-test-store',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
+  DATA_DIR: '/tmp/nanoclaw-test-data',
   ASSISTANT_NAME: 'Andy',
-  ASSISTANT_HAS_OWN_NUMBER: false,
 }));
 
 // Mock logger
@@ -109,7 +109,13 @@ vi.mock('@whiskeysockets/baileys', () => {
   };
 });
 
-import { WhatsAppChannel, WhatsAppChannelOpts } from './whatsapp.js';
+import { WhatsAppChannel, WhatsAppChannelOpts, WhatsAppInstanceConfig } from './whatsapp.js';
+
+const TEST_INSTANCE: WhatsAppInstanceConfig = {
+  name: 'test',
+  hasOwnNumber: false,
+  authDir: 'auth-test',
+};
 import { getLastGroupSync, updateChatName, setLastGroupSync } from '../db.js';
 
 // --- Test helpers ---
@@ -121,7 +127,7 @@ function createTestOpts(
     onMessage: vi.fn(),
     onChatMetadata: vi.fn(),
     registeredGroups: vi.fn(() => ({
-      'registered@g.us': {
+      'wa:test:registered@g.us': {
         name: 'Test Group',
         folder: 'test-group',
         trigger: '@Andy',
@@ -180,7 +186,7 @@ describe('WhatsAppChannel', () => {
   describe('version fetch', () => {
     it('connects with fetched version', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
       await connectChannel(channel);
 
       const { fetchLatestWaWebVersion } =
@@ -196,7 +202,7 @@ describe('WhatsAppChannel', () => {
       );
 
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
       await connectChannel(channel);
 
       // Should still connect successfully despite fetch failure
@@ -209,7 +215,7 @@ describe('WhatsAppChannel', () => {
   describe('connection lifecycle', () => {
     it('resolves connect() when connection opens', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -218,7 +224,7 @@ describe('WhatsAppChannel', () => {
 
     it('sets up LID to phone mapping on open', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -229,7 +235,7 @@ describe('WhatsAppChannel', () => {
 
     it('flushes outgoing queue on reconnect', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -252,7 +258,7 @@ describe('WhatsAppChannel', () => {
 
     it('disconnects cleanly', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -272,7 +278,7 @@ describe('WhatsAppChannel', () => {
         .mockImplementation(() => undefined as never);
 
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       // Start connect but don't await (it won't resolve - process exits)
       channel.connect().catch(() => {});
@@ -297,7 +303,7 @@ describe('WhatsAppChannel', () => {
   describe('reconnection', () => {
     it('reconnects on non-loggedOut disconnect', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -316,7 +322,7 @@ describe('WhatsAppChannel', () => {
         .mockImplementation(() => undefined as never);
 
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -330,7 +336,7 @@ describe('WhatsAppChannel', () => {
 
     it('retries reconnection after 5s on failure', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -347,7 +353,7 @@ describe('WhatsAppChannel', () => {
   describe('message handling', () => {
     it('delivers message for registered group', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -366,14 +372,14 @@ describe('WhatsAppChannel', () => {
       ]);
 
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
-        'registered@g.us',
+        'wa:test:registered@g.us',
         expect.any(String),
         undefined,
         'whatsapp',
         true,
       );
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'registered@g.us',
+        'wa:test:registered@g.us',
         expect.objectContaining({
           id: 'msg-1',
           content: 'Hello Andy',
@@ -385,7 +391,7 @@ describe('WhatsAppChannel', () => {
 
     it('only emits metadata for unregistered groups', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -404,7 +410,7 @@ describe('WhatsAppChannel', () => {
       ]);
 
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
-        'unregistered@g.us',
+        'wa:test:unregistered@g.us',
         expect.any(String),
         undefined,
         'whatsapp',
@@ -415,7 +421,7 @@ describe('WhatsAppChannel', () => {
 
     it('ignores status@broadcast messages', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -437,7 +443,7 @@ describe('WhatsAppChannel', () => {
 
     it('ignores messages with no content', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -458,7 +464,7 @@ describe('WhatsAppChannel', () => {
 
     it('extracts text from extendedTextMessage', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -479,14 +485,14 @@ describe('WhatsAppChannel', () => {
       ]);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'registered@g.us',
+        'wa:test:registered@g.us',
         expect.objectContaining({ content: 'A reply message' }),
       );
     });
 
     it('extracts caption from imageMessage', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -510,14 +516,14 @@ describe('WhatsAppChannel', () => {
       ]);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'registered@g.us',
+        'wa:test:registered@g.us',
         expect.objectContaining({ content: 'Check this photo' }),
       );
     });
 
     it('extracts caption from videoMessage', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -538,14 +544,14 @@ describe('WhatsAppChannel', () => {
       ]);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'registered@g.us',
+        'wa:test:registered@g.us',
         expect.objectContaining({ content: 'Watch this' }),
       );
     });
 
     it('delivers media-only messages (e.g. voice note without caption)', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -580,7 +586,7 @@ describe('WhatsAppChannel', () => {
       );
 
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -612,7 +618,7 @@ describe('WhatsAppChannel', () => {
 
     it('delivers image with caption and media info', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -648,7 +654,7 @@ describe('WhatsAppChannel', () => {
 
     it('delivers document with fileName', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -683,7 +689,7 @@ describe('WhatsAppChannel', () => {
 
     it('delivers sticker as image type', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -717,7 +723,7 @@ describe('WhatsAppChannel', () => {
       ).mockRejectedValueOnce(new Error('Download failed'));
 
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -749,7 +755,7 @@ describe('WhatsAppChannel', () => {
 
     it('skips protocol messages with no content and no media', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -774,7 +780,7 @@ describe('WhatsAppChannel', () => {
 
     it('uses sender JID when pushName is absent', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -793,7 +799,7 @@ describe('WhatsAppChannel', () => {
       ]);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'registered@g.us',
+        'wa:test:registered@g.us',
         expect.objectContaining({ sender_name: '5551234' }),
       );
     });
@@ -805,7 +811,7 @@ describe('WhatsAppChannel', () => {
     it('translates known LID to phone JID', async () => {
       const opts = createTestOpts({
         registeredGroups: vi.fn(() => ({
-          '1234567890@s.whatsapp.net': {
+          'wa:test:1234567890@s.whatsapp.net': {
             name: 'Self Chat',
             folder: 'self-chat',
             trigger: '@Andy',
@@ -813,7 +819,7 @@ describe('WhatsAppChannel', () => {
           },
         })),
       });
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -832,9 +838,9 @@ describe('WhatsAppChannel', () => {
         },
       ]);
 
-      // Should be translated to phone JID
+      // Should be translated to phone JID with instance prefix
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
-        '1234567890@s.whatsapp.net',
+        'wa:test:1234567890@s.whatsapp.net',
         expect.any(String),
         undefined,
         'whatsapp',
@@ -844,7 +850,7 @@ describe('WhatsAppChannel', () => {
 
     it('passes through non-LID JIDs unchanged', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -863,7 +869,7 @@ describe('WhatsAppChannel', () => {
       ]);
 
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
-        'registered@g.us',
+        'wa:test:registered@g.us',
         expect.any(String),
         undefined,
         'whatsapp',
@@ -873,7 +879,7 @@ describe('WhatsAppChannel', () => {
 
     it('passes through unknown LID JIDs unchanged', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -890,9 +896,9 @@ describe('WhatsAppChannel', () => {
         },
       ]);
 
-      // Unknown LID passes through unchanged
+      // Unknown LID passes through unchanged but gets instance prefix
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
-        '0000000000@lid',
+        'wa:test:0000000000@lid',
         expect.any(String),
         undefined,
         'whatsapp',
@@ -906,7 +912,7 @@ describe('WhatsAppChannel', () => {
   describe('outgoing message queue', () => {
     it('sends message directly when connected', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -919,7 +925,7 @@ describe('WhatsAppChannel', () => {
 
     it('prefixes direct chat messages on shared number', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -933,7 +939,7 @@ describe('WhatsAppChannel', () => {
 
     it('queues message when disconnected', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       // Don't connect — channel starts disconnected
       await channel.sendMessage('test@g.us', 'Queued');
@@ -942,7 +948,7 @@ describe('WhatsAppChannel', () => {
 
     it('queues message on send failure', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -957,7 +963,7 @@ describe('WhatsAppChannel', () => {
 
     it('flushes multiple queued messages in order', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       // Queue messages while disconnected
       await channel.sendMessage('test@g.us', 'First');
@@ -994,7 +1000,7 @@ describe('WhatsAppChannel', () => {
       });
 
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -1002,8 +1008,8 @@ describe('WhatsAppChannel', () => {
       await new Promise((r) => setTimeout(r, 50));
 
       expect(fakeSocket.groupFetchAllParticipating).toHaveBeenCalled();
-      expect(updateChatName).toHaveBeenCalledWith('group1@g.us', 'Group One');
-      expect(updateChatName).toHaveBeenCalledWith('group2@g.us', 'Group Two');
+      expect(updateChatName).toHaveBeenCalledWith('wa:test:group1@g.us', 'Group One');
+      expect(updateChatName).toHaveBeenCalledWith('wa:test:group2@g.us', 'Group Two');
       expect(setLastGroupSync).toHaveBeenCalled();
     });
 
@@ -1014,7 +1020,7 @@ describe('WhatsAppChannel', () => {
       );
 
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -1033,14 +1039,14 @@ describe('WhatsAppChannel', () => {
       });
 
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
       await channel.syncGroupMetadata(true);
 
       expect(fakeSocket.groupFetchAllParticipating).toHaveBeenCalled();
-      expect(updateChatName).toHaveBeenCalledWith('group@g.us', 'Forced Group');
+      expect(updateChatName).toHaveBeenCalledWith('wa:test:group@g.us', 'Forced Group');
     });
 
     it('handles group sync failure gracefully', async () => {
@@ -1049,7 +1055,7 @@ describe('WhatsAppChannel', () => {
       );
 
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -1065,7 +1071,7 @@ describe('WhatsAppChannel', () => {
       });
 
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -1075,30 +1081,42 @@ describe('WhatsAppChannel', () => {
       await channel.syncGroupMetadata(true);
 
       expect(updateChatName).toHaveBeenCalledTimes(1);
-      expect(updateChatName).toHaveBeenCalledWith('group1@g.us', 'Has Subject');
+      expect(updateChatName).toHaveBeenCalledWith('wa:test:group1@g.us', 'Has Subject');
     });
   });
 
   // --- JID ownership ---
 
   describe('ownsJid', () => {
-    it('owns @g.us JIDs (WhatsApp groups)', () => {
-      const channel = new WhatsAppChannel(createTestOpts());
-      expect(channel.ownsJid('12345@g.us')).toBe(true);
+    it('owns JIDs with matching instance prefix', () => {
+      const channel = new WhatsAppChannel(createTestOpts(), TEST_INSTANCE);
+      expect(channel.ownsJid('wa:test:12345@g.us')).toBe(true);
+      expect(channel.ownsJid('wa:test:12345@s.whatsapp.net')).toBe(true);
     });
 
-    it('owns @s.whatsapp.net JIDs (WhatsApp DMs)', () => {
-      const channel = new WhatsAppChannel(createTestOpts());
-      expect(channel.ownsJid('12345@s.whatsapp.net')).toBe(true);
+    it('does not own JIDs from other instances', () => {
+      const channel = new WhatsAppChannel(createTestOpts(), TEST_INSTANCE);
+      expect(channel.ownsJid('wa:other:12345@g.us')).toBe(false);
+    });
+
+    it('does not own legacy bare WhatsApp JIDs', () => {
+      const channel = new WhatsAppChannel(createTestOpts(), TEST_INSTANCE);
+      expect(channel.ownsJid('12345@g.us')).toBe(false);
+      expect(channel.ownsJid('12345@s.whatsapp.net')).toBe(false);
     });
 
     it('does not own Telegram JIDs', () => {
-      const channel = new WhatsAppChannel(createTestOpts());
+      const channel = new WhatsAppChannel(createTestOpts(), TEST_INSTANCE);
       expect(channel.ownsJid('tg:12345')).toBe(false);
     });
 
+    it('does not own Slack JIDs', () => {
+      const channel = new WhatsAppChannel(createTestOpts(), TEST_INSTANCE);
+      expect(channel.ownsJid('slack:test:C123')).toBe(false);
+    });
+
     it('does not own unknown JID formats', () => {
-      const channel = new WhatsAppChannel(createTestOpts());
+      const channel = new WhatsAppChannel(createTestOpts(), TEST_INSTANCE);
       expect(channel.ownsJid('random-string')).toBe(false);
     });
   });
@@ -1108,11 +1126,11 @@ describe('WhatsAppChannel', () => {
   describe('setTyping', () => {
     it('sends composing presence when typing', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
-      await channel.setTyping('test@g.us', true);
+      await channel.setTyping('wa:test:test@g.us', true);
       expect(fakeSocket.sendPresenceUpdate).toHaveBeenCalledWith(
         'composing',
         'test@g.us',
@@ -1121,11 +1139,11 @@ describe('WhatsAppChannel', () => {
 
     it('sends paused presence when stopping', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
-      await channel.setTyping('test@g.us', false);
+      await channel.setTyping('wa:test:test@g.us', false);
       expect(fakeSocket.sendPresenceUpdate).toHaveBeenCalledWith(
         'paused',
         'test@g.us',
@@ -1134,7 +1152,7 @@ describe('WhatsAppChannel', () => {
 
     it('handles typing indicator failure gracefully', async () => {
       const opts = createTestOpts();
-      const channel = new WhatsAppChannel(opts);
+      const channel = new WhatsAppChannel(opts, TEST_INSTANCE);
 
       await connectChannel(channel);
 
@@ -1142,7 +1160,7 @@ describe('WhatsAppChannel', () => {
 
       // Should not throw
       await expect(
-        channel.setTyping('test@g.us', true),
+        channel.setTyping('wa:test:test@g.us', true),
       ).resolves.toBeUndefined();
     });
   });
@@ -1150,14 +1168,32 @@ describe('WhatsAppChannel', () => {
   // --- Channel properties ---
 
   describe('channel properties', () => {
-    it('has name "whatsapp"', () => {
-      const channel = new WhatsAppChannel(createTestOpts());
-      expect(channel.name).toBe('whatsapp');
+    it('has instance-prefixed name', () => {
+      const channel = new WhatsAppChannel(createTestOpts(), TEST_INSTANCE);
+      expect(channel.name).toBe('wa:test');
     });
 
-    it('does not expose prefixAssistantName (prefix handled internally)', () => {
-      const channel = new WhatsAppChannel(createTestOpts());
-      expect('prefixAssistantName' in channel).toBe(false);
+    it('exposes instance name', () => {
+      const channel = new WhatsAppChannel(createTestOpts(), TEST_INSTANCE);
+      expect(channel.getInstanceName()).toBe('test');
+    });
+
+    it('exposes default container config when set', () => {
+      const config: WhatsAppInstanceConfig = {
+        ...TEST_INSTANCE,
+        containerConfig: {
+          additionalMounts: [
+            { hostPath: '/path/to/project', containerPath: 'project', readonly: false },
+          ],
+        },
+      };
+      const channel = new WhatsAppChannel(createTestOpts(), config);
+      expect(channel.getDefaultContainerConfig()).toEqual(config.containerConfig);
+    });
+
+    it('returns undefined container config when not set', () => {
+      const channel = new WhatsAppChannel(createTestOpts(), TEST_INSTANCE);
+      expect(channel.getDefaultContainerConfig()).toBeUndefined();
     });
   });
 });
