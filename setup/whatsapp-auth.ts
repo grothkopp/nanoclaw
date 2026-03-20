@@ -83,22 +83,20 @@ function parseArgs(args: string[]): { method: string; phone: string; instance: s
 }
 
 /**
- * Resolve the auth directory name for an instance.
- * Looks up whatsapp-instances.json, falls back to "auth-{instance}" or "auth".
+ * Resolve the instance name. Falls back to first configured instance or "default".
  */
-function resolveAuthDirName(projectRoot: string, instance: string): string {
-  if (!instance) return 'auth';
+function resolveInstanceName(projectRoot: string, instance: string): string {
+  if (instance) return instance;
   const configPath = path.join(projectRoot, 'data', 'whatsapp-instances.json');
   if (fs.existsSync(configPath)) {
     try {
       const instances = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      if (Array.isArray(instances)) {
-        const found = instances.find((i: { name?: string }) => i.name === instance);
-        if (found?.authDir) return found.authDir;
+      if (Array.isArray(instances) && instances.length > 0 && instances[0].name) {
+        return instances[0].name;
       }
     } catch { /* fall through */ }
   }
-  return `auth-${instance}`;
+  return 'default';
 }
 
 function sleep(ms: number): Promise<void> {
@@ -113,13 +111,10 @@ function readFileSafe(filePath: string): string {
   }
 }
 
-function getPhoneNumber(projectRoot: string, authDirName: string): string {
+function getPhoneNumber(authDir: string): string {
   try {
     const creds = JSON.parse(
-      fs.readFileSync(
-        path.join(projectRoot, 'store', authDirName, 'creds.json'),
-        'utf-8',
-      ),
+      fs.readFileSync(path.join(authDir, 'creds.json'), 'utf-8'),
     );
     if (creds.me?.id) {
       return creds.me.id.split(':')[0].split('@')[0];
@@ -150,9 +145,11 @@ export async function run(args: string[]): Promise<void> {
   const projectRoot = process.cwd();
 
   const { method, phone, instance } = parseArgs(args);
-  const authDirName = resolveAuthDirName(projectRoot, instance);
-  const statusFile = path.join(projectRoot, 'store', `auth-status-${authDirName}.txt`);
-  const qrFile = path.join(projectRoot, 'store', `qr-data-${authDirName}.txt`);
+  const instanceName = resolveInstanceName(projectRoot, instance);
+  const authDirName = path.join('auth', instanceName);
+  const authDir = path.join(projectRoot, 'store', authDirName);
+  const statusFile = path.join(authDir, 'auth-status.txt');
+  const qrFile = path.join(authDir, 'qr-data.txt');
 
   if (!method) {
     emitAuthStatus('unknown', 'failed', 'failed', {
@@ -182,12 +179,9 @@ export async function run(args: string[]): Promise<void> {
   }
 
   // Clean stale state
-  logger.info({ method, instance, authDirName }, 'Starting channel authentication');
+  logger.info({ method, instance: instanceName, authDirName }, 'Starting channel authentication');
   try {
-    fs.rmSync(path.join(projectRoot, 'store', authDirName), {
-      recursive: true,
-      force: true,
-    });
+    fs.rmSync(authDir, { recursive: true, force: true });
   } catch {
     /* ok */
   }
@@ -202,12 +196,11 @@ export async function run(args: string[]): Promise<void> {
     /* ok */
   }
 
-  // Start auth process in background
-  const instanceArgs = instance ? ['--instance', instance] : [];
+  // Start auth process in background — always pass the resolved instance name
   const authArgs =
     method === 'pairing-code'
-      ? ['src/whatsapp-auth.ts', '--pairing-code', '--phone', phone, ...instanceArgs]
-      : ['src/whatsapp-auth.ts', ...instanceArgs];
+      ? ['src/whatsapp-auth.ts', '--pairing-code', '--phone', phone, '--instance', instanceName]
+      : ['src/whatsapp-auth.ts', '--instance', instanceName];
 
   const authProc = spawn('npx', ['tsx', ...authArgs], {
     cwd: projectRoot,
@@ -232,9 +225,9 @@ export async function run(args: string[]): Promise<void> {
 
   try {
     if (method === 'qr-browser') {
-      await handleQrBrowser(projectRoot, statusFile, qrFile, authDirName);
+      await handleQrBrowser(projectRoot, statusFile, qrFile, authDir);
     } else {
-      await handlePairingCode(projectRoot, statusFile, phone, authDirName);
+      await handlePairingCode(projectRoot, statusFile, phone, authDir);
     }
   } finally {
     cleanup();
@@ -246,7 +239,7 @@ async function handleQrBrowser(
   projectRoot: string,
   statusFile: string,
   qrFile: string,
-  authDirName: string,
+  authDir: string,
 ): Promise<void> {
   // Poll for QR data (15s)
   let qrReady = false;
@@ -304,7 +297,7 @@ async function handlePairingCode(
   projectRoot: string,
   statusFile: string,
   phone: string,
-  authDirName: string,
+  authDir: string,
 ): Promise<void> {
   // Poll for pairing code (15s)
   let pairingCode = '';
@@ -337,7 +330,7 @@ async function handlePairingCode(
   // Write to file immediately so callers can read it without waiting for stdout
   try {
     fs.writeFileSync(
-      path.join(projectRoot, 'store', 'pairing-code.txt'),
+      path.join(authDir, 'pairing-code.txt'),
       pairingCode,
     );
   } catch {
@@ -363,7 +356,7 @@ async function pollAuthCompletion(
   method: string,
   statusFile: string,
   projectRoot: string,
-  authDirName: string,
+  authDir: string,
   pairingCode?: string,
 ): Promise<void> {
   const extra: Record<string, string> = {};
@@ -378,7 +371,7 @@ async function pollAuthCompletion(
       if (fs.existsSync(htmlPath)) {
         fs.writeFileSync(htmlPath, SUCCESS_HTML);
       }
-      const phoneNumber = getPhoneNumber(projectRoot, authDirName);
+      const phoneNumber = getPhoneNumber(authDir);
       if (phoneNumber) extra.PHONE_NUMBER = phoneNumber;
       emitAuthStatus(method, content, 'success', extra);
       return;

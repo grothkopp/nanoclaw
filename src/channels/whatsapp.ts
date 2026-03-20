@@ -73,8 +73,6 @@ export interface WhatsAppInstanceConfig {
   name: string;
   /** Whether the bot has its own dedicated phone number (affects message prefixing and bot detection) */
   hasOwnNumber?: boolean;
-  /** Auth directory name relative to store/ (defaults to "auth-{name}", use "auth" for legacy) */
-  authDir?: string;
   /** Default container config applied to groups registered under this instance */
   containerConfig?: ContainerConfig;
 }
@@ -110,7 +108,7 @@ export class WhatsAppChannel implements Channel {
     this.instanceName = instanceConfig.name;
     this.jidPrefix = `wa:${instanceConfig.name}:`;
     this.hasOwnNumber = instanceConfig.hasOwnNumber ?? false;
-    this.authDirName = instanceConfig.authDir ?? `auth-${instanceConfig.name}`;
+    this.authDirName = path.join('auth', instanceConfig.name);
     this.defaultContainerConfig = instanceConfig.containerConfig;
     this.name = `wa:${instanceConfig.name}`;
   }

@@ -480,7 +480,7 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
 
-  // Migrate legacy WhatsApp JIDs to instance-prefixed format.
+  // Migrate legacy WhatsApp data to multi-instance format.
   // Reads the first instance name from whatsapp-instances.json.
   try {
     const waConfigPath = path.join(
@@ -495,11 +495,15 @@ async function main(): Promise<void> {
         waInstances.length > 0 &&
         waInstances[0].name
       ) {
+        // Migrate DB JIDs (e.g. "number@g.us" → "wa:personal:number@g.us")
         migrateWhatsAppJids(waInstances[0].name);
+        // Migrate auth dir (store/auth/creds.json → store/auth/{instance}/creds.json)
+        const { migrateAuthDir } = await import('./whatsapp-auth-utils.js');
+        migrateAuthDir(waInstances[0].name);
       }
     }
   } catch (err) {
-    logger.warn({ err }, 'WhatsApp JID migration check failed (non-fatal)');
+    logger.warn({ err }, 'WhatsApp migration check failed (non-fatal)');
   }
 
   loadState();

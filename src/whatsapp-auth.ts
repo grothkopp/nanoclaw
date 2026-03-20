@@ -5,12 +5,10 @@
  * Displays QR code, waits for scan, saves credentials, then exits.
  *
  * Usage:
- *   npx tsx src/whatsapp-auth.ts                          # legacy (uses store/auth)
- *   npx tsx src/whatsapp-auth.ts --instance personal      # multi-instance
- *   npx tsx src/whatsapp-auth.ts --auth-dir auth-work     # explicit auth dir
+ *   npx tsx src/whatsapp-auth.ts                          # uses first configured instance
+ *   npx tsx src/whatsapp-auth.ts --instance personal      # specific instance
  */
 import fs from 'fs';
-import path from 'path';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import readline from 'readline';
@@ -23,12 +21,19 @@ import makeWASocket, {
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 
-import { resolveAuthDir } from './whatsapp-auth-utils.js';
+import {
+  resolveInstanceName,
+  getAuthDir,
+  getStatusFile,
+  getQrFile,
+  getPairingCodeFile,
+  migrateAuthDir,
+} from './whatsapp-auth-utils.js';
 
-const authDirName = resolveAuthDir(process.argv);
-const AUTH_DIR = `./store/${authDirName}`;
-const QR_FILE = `./store/qr-data-${authDirName}.txt`;
-const STATUS_FILE = `./store/auth-status-${authDirName}.txt`;
+const instanceName = resolveInstanceName(process.argv);
+const AUTH_DIR = `./${getAuthDir(instanceName)}`;
+const QR_FILE = `./${getQrFile(instanceName)}`;
+const STATUS_FILE = `./${getStatusFile(instanceName)}`;
 
 const logger = pino({
   level: 'warn', // Quiet logging - only show errors
@@ -60,9 +65,7 @@ async function connectSocket(
   if (state.creds.registered && !isReconnect) {
     fs.writeFileSync(STATUS_FILE, 'already_authenticated');
     console.log('✓ Already authenticated with WhatsApp');
-    console.log(
-      `  To re-authenticate, delete ${AUTH_DIR} and run again.`,
-    );
+    console.log(`  To re-authenticate, delete ${AUTH_DIR} and run again.`);
     process.exit(0);
   }
 
@@ -158,6 +161,9 @@ async function connectSocket(
 }
 
 async function authenticate(): Promise<void> {
+  // Migrate legacy auth layout (store/auth/creds.json → store/auth/{instance}/creds.json)
+  migrateAuthDir(instanceName);
+
   fs.mkdirSync(AUTH_DIR, { recursive: true });
 
   // Clean up any stale QR/status files from previous runs
@@ -175,7 +181,9 @@ async function authenticate(): Promise<void> {
     );
   }
 
-  console.log(`Starting WhatsApp authentication (auth dir: ${authDirName})...\n`);
+  console.log(
+    `Starting WhatsApp authentication (instance: ${instanceName})...\n`,
+  );
 
   await connectSocket(phoneNumber);
 }

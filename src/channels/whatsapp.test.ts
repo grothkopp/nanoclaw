@@ -118,7 +118,6 @@ import {
 const TEST_INSTANCE: WhatsAppInstanceConfig = {
   name: 'test',
   hasOwnNumber: false,
-  authDir: 'auth-test',
 };
 import { getLastGroupSync, updateChatName, setLastGroupSync } from '../db.js';
 

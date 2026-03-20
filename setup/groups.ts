@@ -65,27 +65,21 @@ async function listGroups(limit: number): Promise<void> {
 
 async function syncGroups(projectRoot: string): Promise<void> {
   // Only WhatsApp needs an upfront group sync; other channels resolve names at runtime.
-  // Detect WhatsApp by checking for auth credentials across all configured instances.
+  // Detect WhatsApp by checking for auth credentials: store/auth/{instanceName}/creds.json
   let syncAuthDir = '';
-  const waConfigPath = path.join(projectRoot, 'data', 'whatsapp-instances.json');
-  if (fs.existsSync(waConfigPath)) {
+  const authBase = path.join(projectRoot, 'store', 'auth');
+  if (fs.existsSync(authBase)) {
     try {
-      const instances = JSON.parse(fs.readFileSync(waConfigPath, 'utf-8'));
-      if (Array.isArray(instances)) {
-        for (const inst of instances) {
-          const dir = path.join(projectRoot, 'store', inst.authDir ?? `auth-${inst.name}`);
-          if (fs.existsSync(dir) && fs.readdirSync(dir).length > 0) {
-            syncAuthDir = inst.authDir ?? `auth-${inst.name}`;
-            break;
-          }
+      for (const entry of fs.readdirSync(authBase)) {
+        const dir = path.join(authBase, entry);
+        if (fs.statSync(dir).isDirectory() && fs.existsSync(path.join(dir, 'creds.json'))) {
+          syncAuthDir = path.join('auth', entry);
+          break;
         }
       }
     } catch { /* fall through */ }
-  }
-  // Legacy fallback
-  if (!syncAuthDir) {
-    const legacyDir = path.join(projectRoot, 'store', 'auth');
-    if (fs.existsSync(legacyDir) && fs.readdirSync(legacyDir).length > 0) {
+    // Legacy fallback: creds.json directly in store/auth/
+    if (!syncAuthDir && fs.existsSync(path.join(authBase, 'creds.json'))) {
       syncAuthDir = 'auth';
     }
   }

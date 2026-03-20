@@ -42,27 +42,23 @@ export async function run(_args: string[]): Promise<void> {
   // Check existing config
   const hasEnv = fs.existsSync(path.join(projectRoot, '.env'));
 
-  // Check for WhatsApp auth across all configured instances
+  // Check for WhatsApp auth — convention: store/auth/{instanceName}/
   let hasAuth = false;
-  const waConfigPath = path.join(projectRoot, 'data', 'whatsapp-instances.json');
-  if (fs.existsSync(waConfigPath)) {
+  const authBase = path.join(projectRoot, 'store', 'auth');
+  if (fs.existsSync(authBase)) {
     try {
-      const instances = JSON.parse(fs.readFileSync(waConfigPath, 'utf-8'));
-      if (Array.isArray(instances)) {
-        for (const inst of instances) {
-          const dir = path.join(projectRoot, 'store', inst.authDir ?? `auth-${inst.name}`);
-          if (fs.existsSync(dir) && fs.readdirSync(dir).length > 0) {
-            hasAuth = true;
-            break;
-          }
+      for (const entry of fs.readdirSync(authBase)) {
+        const dir = path.join(authBase, entry);
+        if (fs.statSync(dir).isDirectory() && fs.existsSync(path.join(dir, 'creds.json'))) {
+          hasAuth = true;
+          break;
         }
       }
     } catch { /* fall through */ }
-  }
-  // Legacy fallback: check store/auth
-  if (!hasAuth) {
-    const authDir = path.join(projectRoot, 'store', 'auth');
-    hasAuth = fs.existsSync(authDir) && fs.readdirSync(authDir).length > 0;
+    // Legacy fallback: creds.json directly in store/auth/ (pre-migration)
+    if (!hasAuth && fs.existsSync(path.join(authBase, 'creds.json'))) {
+      hasAuth = true;
+    }
   }
 
   let hasRegisteredGroups = false;
