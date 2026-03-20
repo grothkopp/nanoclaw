@@ -1,11 +1,12 @@
 import path from 'path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import {
   isValidGroupFolder,
   resolveGroupFolderPath,
   resolveGroupIpcPath,
+  _clearGroupDirCache,
 } from './group-folder.js';
 
 describe('group folder validation', () => {
@@ -13,6 +14,7 @@ describe('group folder validation', () => {
     expect(isValidGroupFolder('main')).toBe(true);
     expect(isValidGroupFolder('family-chat')).toBe(true);
     expect(isValidGroupFolder('Team_42')).toBe(true);
+    expect(isValidGroupFolder('personal-whatsapp_main')).toBe(true);
   });
 
   it('rejects traversal and reserved names', () => {
@@ -39,5 +41,22 @@ describe('group folder validation', () => {
   it('throws for unsafe folder names', () => {
     expect(() => resolveGroupFolderPath('../../etc')).toThrow();
     expect(() => resolveGroupIpcPath('/tmp')).toThrow();
+  });
+});
+
+describe('singleGroupDir', () => {
+  beforeEach(() => _clearGroupDirCache());
+
+  it('returns normal path when no singleGroupDir configured', () => {
+    const resolved = resolveGroupFolderPath('personal-chat', 'personal');
+    expect(resolved.endsWith(`${path.sep}groups${path.sep}personal-chat`)).toBe(
+      true,
+    );
+  });
+
+  it('ignores instanceName for path when not configured', () => {
+    const withInstance = resolveGroupFolderPath('personal-chat', 'personal');
+    const without = resolveGroupFolderPath('personal-chat');
+    expect(withInstance).toBe(without);
   });
 });

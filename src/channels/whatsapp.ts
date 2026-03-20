@@ -77,6 +77,8 @@ export interface WhatsAppInstanceConfig {
   assistantName?: string;
   /** Override model for this instance (defaults to global ANTHROPIC_MODEL) */
   model?: string;
+  /** All groups in this instance share this single directory instead of separate folders */
+  singleGroupDir?: string;
   /** Default container config applied to groups registered under this instance */
   containerConfig?: ContainerConfig;
 }

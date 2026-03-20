@@ -70,7 +70,8 @@ function buildVolumeMounts(
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const projectRoot = process.cwd();
-  const groupDir = resolveGroupFolderPath(group.folder);
+  const instanceName = group.containerConfig?.instanceName;
+  const groupDir = resolveGroupFolderPath(group.folder, instanceName);
 
   if (isMain) {
     // Main gets the project root read-only. Writable paths the agent needs
@@ -168,7 +169,6 @@ function buildVolumeMounts(
   };
   syncSkillsFrom(skillsSrc);
   // Per-instance skills overlay: data/{instance}/skills/ then explicit skillsDir
-  const instanceName = group.containerConfig?.instanceName;
   const conventionSkillsDir = getInstanceSkillsDir(instanceName);
   if (conventionSkillsDir) syncSkillsFrom(conventionSkillsDir);
   if (group.containerConfig?.skillsDir) {
@@ -354,7 +354,10 @@ export async function runContainerAgent(
     }
   }
 
-  const groupDir = resolveGroupFolderPath(group.folder);
+  const groupDir = resolveGroupFolderPath(
+    group.folder,
+    group.containerConfig?.instanceName,
+  );
   fs.mkdirSync(groupDir, { recursive: true });
 
   const mounts = buildVolumeMounts(group, input.isMain);

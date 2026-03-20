@@ -152,6 +152,11 @@ function createSchema(database: Database.Database): void {
   }
 }
 
+/** Get the database handle (must call initDatabase first). */
+export function getDb(): Database.Database {
+  return db;
+}
+
 export function initDatabase(): void {
   const dbPath = path.join(STORE_DIR, 'messages.db');
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });

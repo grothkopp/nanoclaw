@@ -36,6 +36,7 @@ import {
   getNewMessages,
   getRegisteredGroup,
   getRouterState,
+  getDb,
   initDatabase,
   migrateWhatsAppJids,
   setRegisteredGroup,
@@ -46,7 +47,7 @@ import {
 } from './db.js';
 import { migrateDataFiles } from './instance-data.js';
 import { GroupQueue } from './group-queue.js';
-import { resolveGroupFolderPath } from './group-folder.js';
+import { resolveGroupFolderPath, migrateGroupFolders } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
@@ -96,7 +97,10 @@ function saveState(): void {
 function registerGroup(jid: string, group: RegisteredGroup): void {
   let groupDir: string;
   try {
-    groupDir = resolveGroupFolderPath(group.folder);
+    groupDir = resolveGroupFolderPath(
+      group.folder,
+      group.containerConfig?.instanceName,
+    );
   } catch (err) {
     logger.warn(
       { jid, folder: group.folder, err },
@@ -503,12 +507,32 @@ async function main(): Promise<void> {
         // Migrate auth dir (store/auth/creds.json → store/auth/{instance}/creds.json)
         const { migrateAuthDir } = await import('./whatsapp-auth-utils.js');
         migrateAuthDir(waInstances[0].name);
-        // Migrate data files (data/github-token → data/{instance}/github-token)
+        // Migrate data files (data/github-token → data/secrets/github-token)
         migrateDataFiles(waInstances[0].name);
+        // Migrate group folders (whatsapp_main → personal-whatsapp_main)
+        migrateGroupFolders(waInstances[0].name, getDb());
+      }
+    }
+    // Also migrate Slack instance group folders
+    const slackConfigPath = path.join(
+      process.cwd(),
+      'data',
+      'slack-instances.json',
+    );
+    if (fs.existsSync(slackConfigPath)) {
+      const slackInstances = JSON.parse(
+        fs.readFileSync(slackConfigPath, 'utf-8'),
+      );
+      if (Array.isArray(slackInstances)) {
+        for (const inst of slackInstances) {
+          if (inst.name) {
+            migrateGroupFolders(inst.name, getDb());
+          }
+        }
       }
     }
   } catch (err) {
-    logger.warn({ err }, 'WhatsApp migration check failed (non-fatal)');
+    logger.warn({ err }, 'Migration check failed (non-fatal)');
   }
 
   loadState();

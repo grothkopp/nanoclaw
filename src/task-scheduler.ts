@@ -18,6 +18,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
+import { instanceNameFromJid } from './instance-data.js';
 import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
@@ -82,7 +83,10 @@ async function runTask(
   const startTime = Date.now();
   let groupDir: string;
   try {
-    groupDir = resolveGroupFolderPath(task.group_folder);
+    groupDir = resolveGroupFolderPath(
+      task.group_folder,
+      instanceNameFromJid(task.chat_jid),
+    );
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     // Stop retry churn for malformed legacy rows.
