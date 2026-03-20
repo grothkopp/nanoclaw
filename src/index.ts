@@ -44,6 +44,7 @@ import {
   storeChatMetadata,
   storeMessage,
 } from './db.js';
+import { migrateDataFiles } from './instance-data.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
@@ -185,7 +186,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const contextMessages =
     history.length > 0 ? [...history, ...missedMessages] : missedMessages;
 
-  const groupAssistantName = group.containerConfig?.assistantName || ASSISTANT_NAME;
+  const groupAssistantName =
+    group.containerConfig?.assistantName || ASSISTANT_NAME;
   const prompt = formatMessages(contextMessages, TIMEZONE, groupAssistantName);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
@@ -501,6 +503,8 @@ async function main(): Promise<void> {
         // Migrate auth dir (store/auth/creds.json → store/auth/{instance}/creds.json)
         const { migrateAuthDir } = await import('./whatsapp-auth-utils.js');
         migrateAuthDir(waInstances[0].name);
+        // Migrate data files (data/github-token → data/{instance}/github-token)
+        migrateDataFiles(waInstances[0].name);
       }
     }
   } catch (err) {

@@ -34,6 +34,10 @@ export interface ContainerConfig {
   assistantName?: string;
   /** Override the model for this group (defaults to global ANTHROPIC_MODEL) */
   model?: string;
+  /** Instance name this group belongs to (for per-instance credential/skill lookup) */
+  instanceName?: string;
+  /** Additional skills directory to overlay on top of container/skills/ */
+  skillsDir?: string;
 }
 
 export interface RegisteredGroup {

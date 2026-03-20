@@ -27,6 +27,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { resolveDataFile, readDataFile } from './instance-data.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -148,15 +149,21 @@ function buildVolumeMounts(
   }
 
   // Sync skills from container/skills/ into each group's .claude/skills/
+  // Then overlay per-instance skills (from containerConfig.skillsDir) on top
   const skillsSrc = path.join(process.cwd(), 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
-  if (fs.existsSync(skillsSrc)) {
-    for (const skillDir of fs.readdirSync(skillsSrc)) {
-      const srcDir = path.join(skillsSrc, skillDir);
-      if (!fs.statSync(srcDir).isDirectory()) continue;
-      const dstDir = path.join(skillsDst, skillDir);
-      fs.cpSync(srcDir, dstDir, { recursive: true });
+  const syncSkillsFrom = (srcDir: string) => {
+    if (!fs.existsSync(srcDir)) return;
+    for (const entry of fs.readdirSync(srcDir)) {
+      const src = path.join(srcDir, entry);
+      if (!fs.statSync(src).isDirectory()) continue;
+      fs.cpSync(src, path.join(skillsDst, entry), { recursive: true });
     }
+  };
+  syncSkillsFrom(skillsSrc);
+  // Per-instance skills overlay (overrides global skills with same name)
+  if (group.containerConfig?.skillsDir) {
+    syncSkillsFrom(group.containerConfig.skillsDir);
   }
   mounts.push({
     hostPath: groupSessionsDir,
@@ -229,10 +236,12 @@ function buildContainerArgs(
     `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
   );
 
+  // Per-instance credential resolution: checks data/{instanceName}/ first, falls back to data/
+  const instanceName = group.containerConfig?.instanceName;
+
   // Google Workspace CLI credentials (if configured)
-  // Mount to /tmp path (writable) and use a writable config dir for gws cache
-  const gwsCredsPath = path.join(process.cwd(), 'data', 'gws-credentials.json');
-  if (fs.existsSync(gwsCredsPath)) {
+  const gwsCredsPath = resolveDataFile(instanceName, 'gws-credentials.json');
+  if (gwsCredsPath) {
     args.push('-v', `${gwsCredsPath}:/tmp/gws-credentials.json:ro`);
     args.push(
       '-e',
@@ -243,17 +252,15 @@ function buildContainerArgs(
   }
 
   // GitHub token for private repo access (if configured)
-  const ghTokenPath = path.join(process.cwd(), 'data', 'github-token');
-  if (fs.existsSync(ghTokenPath)) {
-    const ghToken = fs.readFileSync(ghTokenPath, 'utf-8').trim();
+  const ghToken = readDataFile(instanceName, 'github-token');
+  if (ghToken) {
     args.push('-e', `GITHUB_TOKEN=${ghToken}`);
     args.push('-e', `GH_TOKEN=${ghToken}`);
   }
 
   // Home Assistant token for MCP server access (if configured)
-  const haTokenPath = path.join(process.cwd(), 'data', 'ha-token');
-  if (fs.existsSync(haTokenPath)) {
-    const haToken = fs.readFileSync(haTokenPath, 'utf-8').trim();
+  const haToken = readDataFile(instanceName, 'ha-token');
+  if (haToken) {
     args.push('-e', `HA_TOKEN=${haToken}`);
   }
 

@@ -5,41 +5,33 @@
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR } from './config.js';
 import { logger } from './logger.js';
+import { readDataFile } from './instance-data.js';
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const WHISPER_MODEL = 'whisper-large-v3-turbo';
 
-let groqToken: string | null = null;
+// Cache tokens per instance to avoid re-reading files
+const tokenCache = new Map<string, string | null>();
 
-function getGroqToken(): string | null {
-  if (groqToken !== null) return groqToken || null;
-  const tokenPath = path.join(DATA_DIR, 'groq-token');
-  try {
-    groqToken = fs.readFileSync(tokenPath, 'utf-8').trim();
-    return groqToken;
-  } catch {
-    groqToken = '';
-    return null;
-  }
-}
-
-/**
- * Check if transcription is available (Groq token configured).
- */
-export function isTranscriptionAvailable(): boolean {
-  return !!getGroqToken();
+function getGroqToken(instanceName?: string): string | null {
+  const cacheKey = instanceName ?? '__global__';
+  if (tokenCache.has(cacheKey)) return tokenCache.get(cacheKey)!;
+  const token = readDataFile(instanceName, 'groq-token');
+  tokenCache.set(cacheKey, token);
+  return token;
 }
 
 /**
  * Transcribe an audio file using Groq's Whisper API.
+ * Checks per-instance groq-token first, falls back to global.
  * Returns the transcribed text, or null on failure.
  */
 export async function transcribeAudio(
   filePath: string,
+  instanceName?: string,
 ): Promise<string | null> {
-  const token = getGroqToken();
+  const token = getGroqToken(instanceName);
   if (!token) {
     logger.debug('Groq token not configured, skipping transcription');
     return null;

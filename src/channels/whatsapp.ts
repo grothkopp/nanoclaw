@@ -77,6 +77,8 @@ export interface WhatsAppInstanceConfig {
   assistantName?: string;
   /** Override model for this instance (defaults to global ANTHROPIC_MODEL) */
   model?: string;
+  /** Additional skills directory to overlay on top of container/skills/ */
+  skillsDir?: string;
   /** Default container config applied to groups registered under this instance */
   containerConfig?: ContainerConfig;
 }
@@ -337,7 +339,7 @@ export class WhatsAppChannel implements Channel {
 
             // Transcribe audio messages (voice notes, audio files)
             if (mediaInfo?.type === 'audio' && mediaInfo.path) {
-              const transcription = await transcribeAudio(mediaInfo.path);
+              const transcription = await transcribeAudio(mediaInfo.path, this.instanceName);
               if (transcription) {
                 content = content
                   ? `${content}\n\n[Voice transcription: ${transcription}]`
@@ -633,14 +635,15 @@ if (instances.length > 0) {
       logger.warn('WhatsApp instance missing required "name" field — skipping');
       continue;
     }
-    // Merge instance-level assistantName/model into containerConfig defaults
-    if (instance.assistantName || instance.model) {
-      instance.containerConfig = {
-        ...instance.containerConfig,
-        assistantName: instance.containerConfig?.assistantName ?? instance.assistantName,
-        model: instance.containerConfig?.model ?? instance.model,
-      };
-    }
+    // Merge instance-level settings into containerConfig defaults
+    instance.containerConfig = {
+      ...instance.containerConfig,
+      instanceName: instance.name,
+      assistantName:
+        instance.containerConfig?.assistantName ?? instance.assistantName,
+      model: instance.containerConfig?.model ?? instance.model,
+      skillsDir: instance.containerConfig?.skillsDir ?? instance.skillsDir,
+    };
     registerChannel(`wa:${instance.name}`, (opts: ChannelOpts) => {
       return new WhatsAppChannel(opts, instance);
     });

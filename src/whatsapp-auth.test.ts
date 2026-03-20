@@ -37,7 +37,12 @@ describe('resolveInstanceName', () => {
   });
 
   it('returns --instance value when provided', () => {
-    const result = resolveInstanceName(['node', 'script.js', '--instance', 'work']);
+    const result = resolveInstanceName([
+      'node',
+      'script.js',
+      '--instance',
+      'work',
+    ]);
     expect(result).toBe('work');
   });
 
@@ -75,7 +80,9 @@ describe('resolveInstanceName', () => {
     const result = resolveInstanceName(['node', 'script.js', '--instance']);
     // No value after --instance, falls back to config or default
     vi.mocked(fs.existsSync).mockReturnValue(false);
-    expect(resolveInstanceName(['node', 'script.js', '--instance'])).toBe('default');
+    expect(resolveInstanceName(['node', 'script.js', '--instance'])).toBe(
+      'default',
+    );
   });
 });
 
@@ -87,15 +94,21 @@ describe('path helpers', () => {
   });
 
   it('getStatusFile returns file inside auth dir', () => {
-    expect(getStatusFile('work')).toBe(path.join('store', 'auth', 'work', 'auth-status.txt'));
+    expect(getStatusFile('work')).toBe(
+      path.join('store', 'auth', 'work', 'auth-status.txt'),
+    );
   });
 
   it('getQrFile returns file inside auth dir', () => {
-    expect(getQrFile('work')).toBe(path.join('store', 'auth', 'work', 'qr-data.txt'));
+    expect(getQrFile('work')).toBe(
+      path.join('store', 'auth', 'work', 'qr-data.txt'),
+    );
   });
 
   it('getPairingCodeFile returns file inside auth dir', () => {
-    expect(getPairingCodeFile('work')).toBe(path.join('store', 'auth', 'work', 'pairing-code.txt'));
+    expect(getPairingCodeFile('work')).toBe(
+      path.join('store', 'auth', 'work', 'pairing-code.txt'),
+    );
   });
 });
 
@@ -110,8 +123,8 @@ describe('migrateAuthDir', () => {
     // creds.json exists at store/auth/creds.json (legacy)
     // target dir store/auth/personal/ does NOT exist
     vi.mocked(fs.existsSync)
-      .mockReturnValueOnce(true)   // store/auth/creds.json
-      .mockReturnValueOnce(false)  // store/auth/personal/
+      .mockReturnValueOnce(true) // store/auth/creds.json
+      .mockReturnValueOnce(false) // store/auth/personal/
       .mockReturnValueOnce(false); // stale file checks
 
     vi.mocked(fs.readdirSync)
@@ -126,7 +139,7 @@ describe('migrateAuthDir', () => {
 
   it('skips migration when target dir already exists', () => {
     vi.mocked(fs.existsSync)
-      .mockReturnValueOnce(true)  // creds.json exists
+      .mockReturnValueOnce(true) // creds.json exists
       .mockReturnValueOnce(true); // target dir already exists
 
     vi.mocked(fs.readdirSync).mockReturnValue([] as any);
@@ -160,10 +173,14 @@ describe('migrateAuthDir', () => {
     migrateAuthDir('personal');
 
     // Should try to unlink stale files but not messages.db
-    const unlinkCalls = vi.mocked(fs.unlinkSync).mock.calls.map(c => c[0]);
+    const unlinkCalls = vi.mocked(fs.unlinkSync).mock.calls.map((c) => c[0]);
     expect(unlinkCalls).toContain('store/auth-status.txt');
     expect(unlinkCalls).toContain('store/pairing-code.txt');
-    expect(unlinkCalls.some(f => String(f).includes('auth-status-auth'))).toBe(true);
-    expect(unlinkCalls.some(f => String(f).includes('messages.db'))).toBe(false);
+    expect(
+      unlinkCalls.some((f) => String(f).includes('auth-status-auth')),
+    ).toBe(true);
+    expect(unlinkCalls.some((f) => String(f).includes('messages.db'))).toBe(
+      false,
+    );
   });
 });

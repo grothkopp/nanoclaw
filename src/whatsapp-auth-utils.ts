@@ -23,11 +23,19 @@ export function resolveInstanceName(argv: string[]): string {
   }
 
   // Fall back to first configured instance
-  const configPath = path.join(process.cwd(), 'data', 'whatsapp-instances.json');
+  const configPath = path.join(
+    process.cwd(),
+    'data',
+    'whatsapp-instances.json',
+  );
   if (fs.existsSync(configPath)) {
     try {
       const instances = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      if (Array.isArray(instances) && instances.length > 0 && instances[0].name) {
+      if (
+        Array.isArray(instances) &&
+        instances.length > 0 &&
+        instances[0].name
+      ) {
         return instances[0].name;
       }
     } catch {
@@ -99,13 +107,23 @@ export function migrateAuthDir(instanceName: string): void {
   // Also clean instance-specific files from old layout (store/auth-status-auth.txt etc.)
   try {
     for (const f of fs.readdirSync('store')) {
-      if (f.startsWith('auth-status-') || f.startsWith('qr-data-') || f.startsWith('pairing-code')) {
+      if (
+        f.startsWith('auth-status-') ||
+        f.startsWith('qr-data-') ||
+        f.startsWith('pairing-code')
+      ) {
         staleFiles.push(path.join('store', f));
       }
     }
-  } catch { /* store/ might not exist */ }
+  } catch {
+    /* store/ might not exist */
+  }
 
   for (const f of staleFiles) {
-    try { fs.unlinkSync(f); } catch { /* ok */ }
+    try {
+      fs.unlinkSync(f);
+    } catch {
+      /* ok */
+    }
   }
 }

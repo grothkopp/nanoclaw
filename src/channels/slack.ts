@@ -33,6 +33,8 @@ export interface SlackInstanceConfig {
   assistantName?: string;
   /** Override model for this instance (defaults to global ANTHROPIC_MODEL) */
   model?: string;
+  /** Additional skills directory to overlay on top of container/skills/ */
+  skillsDir?: string;
   /** Default container config applied to groups registered under this instance */
   containerConfig?: ContainerConfig;
 }
@@ -360,14 +362,15 @@ if (instances.length > 0) {
       );
       continue;
     }
-    // Merge instance-level assistantName/model into containerConfig defaults
-    if (instance.assistantName || instance.model) {
-      instance.containerConfig = {
-        ...instance.containerConfig,
-        assistantName: instance.containerConfig?.assistantName ?? instance.assistantName,
-        model: instance.containerConfig?.model ?? instance.model,
-      };
-    }
+    // Merge instance-level settings into containerConfig defaults
+    instance.containerConfig = {
+      ...instance.containerConfig,
+      instanceName: instance.name,
+      assistantName:
+        instance.containerConfig?.assistantName ?? instance.assistantName,
+      model: instance.containerConfig?.model ?? instance.model,
+      skillsDir: instance.containerConfig?.skillsDir ?? instance.skillsDir,
+    };
     registerChannel(`slack:${instance.name}`, (opts: ChannelOpts) => {
       return new SlackChannel(opts, instance);
     });
