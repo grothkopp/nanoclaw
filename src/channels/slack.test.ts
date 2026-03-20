@@ -9,6 +9,7 @@ vi.mock('./registry.js', () => ({ registerChannel: vi.fn() }));
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Jonesy',
   TRIGGER_PATTERN: /^@Jonesy\b/i,
+  DATA_DIR: '/tmp/nanoclaw-test-data',
 }));
 
 // Mock logger
@@ -74,17 +75,31 @@ vi.mock('@slack/bolt', () => ({
   LogLevel: { ERROR: 'error' },
 }));
 
-// Mock env
-vi.mock('../env.js', () => ({
-  readEnvFile: vi.fn().mockReturnValue({
-    SLACK_BOT_TOKEN: 'xoxb-test-token',
-    SLACK_APP_TOKEN: 'xapp-test-token',
-  }),
-}));
+// Mock fs (for loadSlackInstances)
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof import('fs')>('fs');
+  return {
+    ...actual,
+    default: {
+      ...actual,
+      existsSync: vi.fn(() => false),
+      readFileSync: vi.fn(),
+    },
+  };
+});
 
-import { SlackChannel, SlackChannelOpts } from './slack.js';
+import {
+  SlackChannel,
+  SlackChannelOpts,
+  SlackInstanceConfig,
+} from './slack.js';
 import { updateChatName } from '../db.js';
-import { readEnvFile } from '../env.js';
+
+const TEST_INSTANCE: SlackInstanceConfig = {
+  name: 'test',
+  botToken: 'xoxb-test-token',
+  appToken: 'xapp-test-token',
+};
 
 // --- Test helpers ---
 
@@ -95,9 +110,9 @@ function createTestOpts(
     onMessage: vi.fn(),
     onChatMetadata: vi.fn(),
     registeredGroups: vi.fn(() => ({
-      'slack:C0123456789': {
+      'slack:test:C0123456789': {
         name: 'Test Channel',
-        folder: 'test-channel',
+        folder: 'slack_test_test-channel',
         trigger: '@Jonesy',
         added_at: '2024-01-01T00:00:00.000Z',
       },
@@ -155,7 +170,7 @@ describe('SlackChannel', () => {
   describe('connection lifecycle', () => {
     it('resolves connect() when app starts', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
 
       await channel.connect();
 
@@ -164,14 +179,14 @@ describe('SlackChannel', () => {
 
     it('registers message event handler on construction', () => {
       const opts = createTestOpts();
-      new SlackChannel(opts);
+      new SlackChannel(opts, TEST_INSTANCE);
 
       expect(currentApp().eventHandlers.has('message')).toBe(true);
     });
 
     it('gets bot user ID on connect', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
 
       await channel.connect();
 
@@ -180,7 +195,7 @@ describe('SlackChannel', () => {
 
     it('disconnects cleanly', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
 
       await channel.connect();
       expect(channel.isConnected()).toBe(true);
@@ -191,7 +206,7 @@ describe('SlackChannel', () => {
 
     it('isConnected() returns false before connect', () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
 
       expect(channel.isConnected()).toBe(false);
     });
@@ -202,24 +217,24 @@ describe('SlackChannel', () => {
   describe('message handling', () => {
     it('delivers message for registered channel', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const event = createMessageEvent({ text: 'Hello everyone' });
       await triggerMessageEvent(event);
 
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
-        'slack:C0123456789',
+        'slack:test:C0123456789',
         expect.any(String),
         undefined,
         'slack',
         true,
       );
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'slack:C0123456789',
+        'slack:test:C0123456789',
         expect.objectContaining({
           id: '1704067200.000000',
-          chat_jid: 'slack:C0123456789',
+          chat_jid: 'slack:test:C0123456789',
           sender: 'U_USER_456',
           content: 'Hello everyone',
           is_from_me: false,
@@ -229,14 +244,14 @@ describe('SlackChannel', () => {
 
     it('only emits metadata for unregistered channels', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const event = createMessageEvent({ channel: 'C9999999999' });
       await triggerMessageEvent(event);
 
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
-        'slack:C9999999999',
+        'slack:test:C9999999999',
         expect.any(String),
         undefined,
         'slack',
@@ -247,7 +262,7 @@ describe('SlackChannel', () => {
 
     it('skips non-text subtypes (channel_join, etc.)', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const event = createMessageEvent({ subtype: 'channel_join' });
@@ -259,7 +274,7 @@ describe('SlackChannel', () => {
 
     it('allows bot_message subtype through', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const event = createMessageEvent({
@@ -274,7 +289,7 @@ describe('SlackChannel', () => {
 
     it('skips messages with no text', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const event = createMessageEvent({ text: undefined as any });
@@ -285,7 +300,7 @@ describe('SlackChannel', () => {
 
     it('detects bot messages by bot_id', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const event = createMessageEvent({
@@ -297,7 +312,7 @@ describe('SlackChannel', () => {
 
       // Has bot_id so should be marked as bot message
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'slack:C0123456789',
+        'slack:test:C0123456789',
         expect.objectContaining({
           is_from_me: true,
           is_bot_message: true,
@@ -308,7 +323,7 @@ describe('SlackChannel', () => {
 
     it('detects bot messages by matching bot user ID', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const event = createMessageEvent({
@@ -318,7 +333,7 @@ describe('SlackChannel', () => {
       await triggerMessageEvent(event);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'slack:C0123456789',
+        'slack:test:C0123456789',
         expect.objectContaining({
           is_from_me: true,
           is_bot_message: true,
@@ -329,7 +344,7 @@ describe('SlackChannel', () => {
     it('identifies IM channel type as non-group', async () => {
       const opts = createTestOpts({
         registeredGroups: vi.fn(() => ({
-          'slack:D0123456789': {
+          'slack:test:D0123456789': {
             name: 'DM',
             folder: 'dm',
             trigger: '@Jonesy',
@@ -337,7 +352,7 @@ describe('SlackChannel', () => {
           },
         })),
       });
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const event = createMessageEvent({
@@ -347,7 +362,7 @@ describe('SlackChannel', () => {
       await triggerMessageEvent(event);
 
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
-        'slack:D0123456789',
+        'slack:test:D0123456789',
         expect.any(String),
         undefined,
         'slack',
@@ -357,14 +372,14 @@ describe('SlackChannel', () => {
 
     it('converts ts to ISO timestamp', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const event = createMessageEvent({ ts: '1704067200.000000' });
       await triggerMessageEvent(event);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'slack:C0123456789',
+        'slack:test:C0123456789',
         expect.objectContaining({
           timestamp: '2024-01-01T00:00:00.000Z',
         }),
@@ -373,7 +388,7 @@ describe('SlackChannel', () => {
 
     it('resolves user name from Slack API', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const event = createMessageEvent({ user: 'U_USER_456', text: 'Hello' });
@@ -383,7 +398,7 @@ describe('SlackChannel', () => {
         user: 'U_USER_456',
       });
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'slack:C0123456789',
+        'slack:test:C0123456789',
         expect.objectContaining({
           sender_name: 'Alice Smith',
         }),
@@ -392,7 +407,7 @@ describe('SlackChannel', () => {
 
     it('caches user names to avoid repeated API calls', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       // First message — API call
@@ -413,7 +428,7 @@ describe('SlackChannel', () => {
 
     it('falls back to user ID when API fails', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       currentApp().client.users.info.mockRejectedValueOnce(
@@ -424,7 +439,7 @@ describe('SlackChannel', () => {
       await triggerMessageEvent(event);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'slack:C0123456789',
+        'slack:test:C0123456789',
         expect.objectContaining({
           sender_name: 'U_UNKNOWN',
         }),
@@ -433,7 +448,7 @@ describe('SlackChannel', () => {
 
     it('flattens threaded replies into channel messages', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const event = createMessageEvent({
@@ -445,7 +460,7 @@ describe('SlackChannel', () => {
 
       // Threaded replies are delivered as regular channel messages
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'slack:C0123456789',
+        'slack:test:C0123456789',
         expect.objectContaining({
           content: 'Thread reply',
         }),
@@ -454,7 +469,7 @@ describe('SlackChannel', () => {
 
     it('delivers thread parent messages normally', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const event = createMessageEvent({
@@ -465,7 +480,7 @@ describe('SlackChannel', () => {
       await triggerMessageEvent(event);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'slack:C0123456789',
+        'slack:test:C0123456789',
         expect.objectContaining({
           content: 'Thread parent',
         }),
@@ -474,7 +489,7 @@ describe('SlackChannel', () => {
 
     it('delivers messages without thread_ts normally', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const event = createMessageEvent({ text: 'Normal message' });
@@ -489,7 +504,7 @@ describe('SlackChannel', () => {
   describe('@mention translation', () => {
     it('prepends trigger when bot is @mentioned via Slack format', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect(); // sets botUserId to 'U_BOT_123'
 
       const event = createMessageEvent({
@@ -499,7 +514,7 @@ describe('SlackChannel', () => {
       await triggerMessageEvent(event);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'slack:C0123456789',
+        'slack:test:C0123456789',
         expect.objectContaining({
           content: '@Jonesy Hey <@U_BOT_123> what do you think?',
         }),
@@ -508,7 +523,7 @@ describe('SlackChannel', () => {
 
     it('does not prepend trigger when trigger pattern already matches', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const event = createMessageEvent({
@@ -519,7 +534,7 @@ describe('SlackChannel', () => {
 
       // Content should be unchanged since it already matches TRIGGER_PATTERN
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'slack:C0123456789',
+        'slack:test:C0123456789',
         expect.objectContaining({
           content: '@Jonesy <@U_BOT_123> hello',
         }),
@@ -528,7 +543,7 @@ describe('SlackChannel', () => {
 
     it('does not translate mentions in bot messages', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const event = createMessageEvent({
@@ -540,7 +555,7 @@ describe('SlackChannel', () => {
 
       // Bot messages skip mention translation
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'slack:C0123456789',
+        'slack:test:C0123456789',
         expect.objectContaining({
           content: 'Echo: <@U_BOT_123>',
         }),
@@ -549,7 +564,7 @@ describe('SlackChannel', () => {
 
     it('does not translate mentions for other users', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const event = createMessageEvent({
@@ -560,7 +575,7 @@ describe('SlackChannel', () => {
 
       // Mention is for a different user, not the bot
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'slack:C0123456789',
+        'slack:test:C0123456789',
         expect.objectContaining({
           content: 'Hey <@U_OTHER_USER> look at this',
         }),
@@ -573,10 +588,10 @@ describe('SlackChannel', () => {
   describe('sendMessage', () => {
     it('sends message via Slack client', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
-      await channel.sendMessage('slack:C0123456789', 'Hello');
+      await channel.sendMessage('slack:test:C0123456789', 'Hello');
 
       expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith({
         channel: 'C0123456789',
@@ -584,12 +599,12 @@ describe('SlackChannel', () => {
       });
     });
 
-    it('strips slack: prefix from JID', async () => {
+    it('strips instance-prefixed JID to get channel ID', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
-      await channel.sendMessage('slack:D9876543210', 'DM message');
+      await channel.sendMessage('slack:test:D9876543210', 'DM message');
 
       expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith({
         channel: 'D9876543210',
@@ -599,17 +614,17 @@ describe('SlackChannel', () => {
 
     it('queues message when disconnected', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
 
       // Don't connect — should queue
-      await channel.sendMessage('slack:C0123456789', 'Queued message');
+      await channel.sendMessage('slack:test:C0123456789', 'Queued message');
 
       expect(currentApp().client.chat.postMessage).not.toHaveBeenCalled();
     });
 
     it('queues message on send failure', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       currentApp().client.chat.postMessage.mockRejectedValueOnce(
@@ -618,18 +633,18 @@ describe('SlackChannel', () => {
 
       // Should not throw
       await expect(
-        channel.sendMessage('slack:C0123456789', 'Will fail'),
+        channel.sendMessage('slack:test:C0123456789', 'Will fail'),
       ).resolves.toBeUndefined();
     });
 
     it('splits long messages at 4000 character boundary', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       // Create a message longer than 4000 chars
       const longText = 'A'.repeat(4500);
-      await channel.sendMessage('slack:C0123456789', longText);
+      await channel.sendMessage('slack:test:C0123456789', longText);
 
       // Should be split into 2 messages: 4000 + 500
       expect(currentApp().client.chat.postMessage).toHaveBeenCalledTimes(2);
@@ -645,11 +660,11 @@ describe('SlackChannel', () => {
 
     it('sends exactly-4000-char messages as a single message', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const text = 'B'.repeat(4000);
-      await channel.sendMessage('slack:C0123456789', text);
+      await channel.sendMessage('slack:test:C0123456789', text);
 
       expect(currentApp().client.chat.postMessage).toHaveBeenCalledTimes(1);
       expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith({
@@ -660,11 +675,11 @@ describe('SlackChannel', () => {
 
     it('splits messages into 3 parts when over 8000 chars', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
       await channel.connect();
 
       const longText = 'C'.repeat(8500);
-      await channel.sendMessage('slack:C0123456789', longText);
+      await channel.sendMessage('slack:test:C0123456789', longText);
 
       // 4000 + 4000 + 500 = 3 messages
       expect(currentApp().client.chat.postMessage).toHaveBeenCalledTimes(3);
@@ -672,11 +687,11 @@ describe('SlackChannel', () => {
 
     it('flushes queued messages on connect', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
 
       // Queue messages while disconnected
-      await channel.sendMessage('slack:C0123456789', 'First queued');
-      await channel.sendMessage('slack:C0123456789', 'Second queued');
+      await channel.sendMessage('slack:test:C0123456789', 'First queued');
+      await channel.sendMessage('slack:test:C0123456789', 'Second queued');
 
       expect(currentApp().client.chat.postMessage).not.toHaveBeenCalled();
 
@@ -697,33 +712,43 @@ describe('SlackChannel', () => {
   // --- ownsJid ---
 
   describe('ownsJid', () => {
-    it('owns slack: JIDs', () => {
-      const channel = new SlackChannel(createTestOpts());
-      expect(channel.ownsJid('slack:C0123456789')).toBe(true);
+    it('owns JIDs with matching instance prefix', () => {
+      const channel = new SlackChannel(createTestOpts(), TEST_INSTANCE);
+      expect(channel.ownsJid('slack:test:C0123456789')).toBe(true);
     });
 
-    it('owns slack: DM JIDs', () => {
-      const channel = new SlackChannel(createTestOpts());
-      expect(channel.ownsJid('slack:D0123456789')).toBe(true);
+    it('owns DM JIDs with matching instance prefix', () => {
+      const channel = new SlackChannel(createTestOpts(), TEST_INSTANCE);
+      expect(channel.ownsJid('slack:test:D0123456789')).toBe(true);
+    });
+
+    it('does not own JIDs from other Slack instances', () => {
+      const channel = new SlackChannel(createTestOpts(), TEST_INSTANCE);
+      expect(channel.ownsJid('slack:other:C0123456789')).toBe(false);
+    });
+
+    it('does not own legacy slack: JIDs without instance', () => {
+      const channel = new SlackChannel(createTestOpts(), TEST_INSTANCE);
+      expect(channel.ownsJid('slack:C0123456789')).toBe(false);
     });
 
     it('does not own WhatsApp group JIDs', () => {
-      const channel = new SlackChannel(createTestOpts());
+      const channel = new SlackChannel(createTestOpts(), TEST_INSTANCE);
       expect(channel.ownsJid('12345@g.us')).toBe(false);
     });
 
     it('does not own WhatsApp DM JIDs', () => {
-      const channel = new SlackChannel(createTestOpts());
+      const channel = new SlackChannel(createTestOpts(), TEST_INSTANCE);
       expect(channel.ownsJid('12345@s.whatsapp.net')).toBe(false);
     });
 
     it('does not own Telegram JIDs', () => {
-      const channel = new SlackChannel(createTestOpts());
+      const channel = new SlackChannel(createTestOpts(), TEST_INSTANCE);
       expect(channel.ownsJid('tg:123456')).toBe(false);
     });
 
     it('does not own unknown JID formats', () => {
-      const channel = new SlackChannel(createTestOpts());
+      const channel = new SlackChannel(createTestOpts(), TEST_INSTANCE);
       expect(channel.ownsJid('random-string')).toBe(false);
     });
   });
@@ -733,7 +758,7 @@ describe('SlackChannel', () => {
   describe('syncChannelMetadata', () => {
     it('calls conversations.list and updates chat names', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
 
       currentApp().client.conversations.list.mockResolvedValue({
         channels: [
@@ -747,15 +772,18 @@ describe('SlackChannel', () => {
       await channel.connect();
 
       // connect() calls syncChannelMetadata internally
-      expect(updateChatName).toHaveBeenCalledWith('slack:C001', 'general');
-      expect(updateChatName).toHaveBeenCalledWith('slack:C002', 'random');
+      expect(updateChatName).toHaveBeenCalledWith('slack:test:C001', 'general');
+      expect(updateChatName).toHaveBeenCalledWith('slack:test:C002', 'random');
       // Non-member channels are skipped
-      expect(updateChatName).not.toHaveBeenCalledWith('slack:C003', 'external');
+      expect(updateChatName).not.toHaveBeenCalledWith(
+        'slack:test:C003',
+        'external',
+      );
     });
 
     it('handles API errors gracefully', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
 
       currentApp().client.conversations.list.mockRejectedValue(
         new Error('API error'),
@@ -771,47 +799,65 @@ describe('SlackChannel', () => {
   describe('setTyping', () => {
     it('resolves without error (no-op)', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
 
       // Should not throw — Slack has no bot typing indicator API
       await expect(
-        channel.setTyping('slack:C0123456789', true),
+        channel.setTyping('slack:test:C0123456789', true),
       ).resolves.toBeUndefined();
     });
 
     it('accepts false without error', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
 
       await expect(
-        channel.setTyping('slack:C0123456789', false),
+        channel.setTyping('slack:test:C0123456789', false),
       ).resolves.toBeUndefined();
     });
   });
 
-  // --- Constructor error handling ---
+  // --- Instance config ---
 
-  describe('constructor', () => {
-    it('throws when SLACK_BOT_TOKEN is missing', () => {
-      vi.mocked(readEnvFile).mockReturnValueOnce({
-        SLACK_BOT_TOKEN: '',
-        SLACK_APP_TOKEN: 'xapp-test-token',
-      });
+  describe('instance config', () => {
+    it('uses instance name in channel name', () => {
+      const channel = new SlackChannel(createTestOpts(), TEST_INSTANCE);
+      expect(channel.name).toBe('slack:test');
+    });
 
-      expect(() => new SlackChannel(createTestOpts())).toThrow(
-        'SLACK_BOT_TOKEN and SLACK_APP_TOKEN must be set in .env',
+    it('scopes ownsJid to instance prefix', () => {
+      const channel = new SlackChannel(createTestOpts(), TEST_INSTANCE);
+      expect(channel.ownsJid('slack:test:C0123456789')).toBe(true);
+      expect(channel.ownsJid('slack:other:C0123456789')).toBe(false);
+    });
+
+    it('exposes instance name', () => {
+      const channel = new SlackChannel(createTestOpts(), TEST_INSTANCE);
+      expect(channel.getInstanceName()).toBe('test');
+    });
+
+    it('exposes default container config when set', () => {
+      const config: SlackInstanceConfig = {
+        ...TEST_INSTANCE,
+        containerConfig: {
+          additionalMounts: [
+            {
+              hostPath: '/path/to/project',
+              containerPath: 'project',
+              readonly: false,
+            },
+          ],
+        },
+      };
+      const channel = new SlackChannel(createTestOpts(), config);
+      expect(channel.getDefaultContainerConfig()).toEqual(
+        config.containerConfig,
       );
     });
 
-    it('throws when SLACK_APP_TOKEN is missing', () => {
-      vi.mocked(readEnvFile).mockReturnValueOnce({
-        SLACK_BOT_TOKEN: 'xoxb-test-token',
-        SLACK_APP_TOKEN: '',
-      });
-
-      expect(() => new SlackChannel(createTestOpts())).toThrow(
-        'SLACK_BOT_TOKEN and SLACK_APP_TOKEN must be set in .env',
-      );
+    it('returns undefined container config when not set', () => {
+      const channel = new SlackChannel(createTestOpts(), TEST_INSTANCE);
+      expect(channel.getDefaultContainerConfig()).toBeUndefined();
     });
   });
 
@@ -820,7 +866,7 @@ describe('SlackChannel', () => {
   describe('syncChannelMetadata pagination', () => {
     it('paginates through multiple pages of channels', async () => {
       const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
 
       // First page returns a cursor; second page returns no cursor
       currentApp()
@@ -843,17 +889,17 @@ describe('SlackChannel', () => {
       );
 
       // Both channels from both pages stored
-      expect(updateChatName).toHaveBeenCalledWith('slack:C001', 'general');
-      expect(updateChatName).toHaveBeenCalledWith('slack:C002', 'random');
+      expect(updateChatName).toHaveBeenCalledWith('slack:test:C001', 'general');
+      expect(updateChatName).toHaveBeenCalledWith('slack:test:C002', 'random');
     });
   });
 
   // --- Channel properties ---
 
   describe('channel properties', () => {
-    it('has name "slack"', () => {
-      const channel = new SlackChannel(createTestOpts());
-      expect(channel.name).toBe('slack');
+    it('has instance-prefixed name', () => {
+      const channel = new SlackChannel(createTestOpts(), TEST_INSTANCE);
+      expect(channel.name).toBe('slack:test');
     });
   });
 });

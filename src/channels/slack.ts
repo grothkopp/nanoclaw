@@ -1,13 +1,15 @@
+import fs from 'fs';
+import path from 'path';
 import { App, LogLevel } from '@slack/bolt';
 import type { GenericMessageEvent, BotMessageEvent } from '@slack/types';
 
-import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
+import { ASSISTANT_NAME, DATA_DIR, TRIGGER_PATTERN } from '../config.js';
 import { updateChatName } from '../db.js';
-import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
   Channel,
+  ContainerConfig,
   OnInboundMessage,
   OnChatMetadata,
   RegisteredGroup,
@@ -22,6 +24,15 @@ const MAX_MESSAGE_LENGTH = 4000;
 // (BotMessageEvent, subtype 'bot_message') so we can track our own output.
 type HandledMessageEvent = GenericMessageEvent | BotMessageEvent;
 
+export interface SlackInstanceConfig {
+  /** Unique name for this instance (e.g. "aicx", "nanoclaw"). Used in JIDs and folder names. */
+  name: string;
+  botToken: string;
+  appToken: string;
+  /** Default container config applied to groups registered under this instance */
+  containerConfig?: ContainerConfig;
+}
+
 export interface SlackChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
@@ -29,8 +40,11 @@ export interface SlackChannelOpts {
 }
 
 export class SlackChannel implements Channel {
-  name = 'slack';
+  name: string;
 
+  private instanceName: string;
+  private jidPrefix: string;
+  private defaultContainerConfig?: ContainerConfig;
   private app: App;
   private botUserId: string | undefined;
   private connected = false;
@@ -40,29 +54,31 @@ export class SlackChannel implements Channel {
 
   private opts: SlackChannelOpts;
 
-  constructor(opts: SlackChannelOpts) {
+  constructor(opts: SlackChannelOpts, instanceConfig: SlackInstanceConfig) {
     this.opts = opts;
-
-    // Read tokens from .env (not process.env — keeps secrets off the environment
-    // so they don't leak to child processes, matching NanoClaw's security pattern)
-    const env = readEnvFile(['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN']);
-    const botToken = env.SLACK_BOT_TOKEN;
-    const appToken = env.SLACK_APP_TOKEN;
-
-    if (!botToken || !appToken) {
-      throw new Error(
-        'SLACK_BOT_TOKEN and SLACK_APP_TOKEN must be set in .env',
-      );
-    }
+    this.instanceName = instanceConfig.name;
+    this.jidPrefix = `slack:${instanceConfig.name}:`;
+    this.defaultContainerConfig = instanceConfig.containerConfig;
+    this.name = `slack:${instanceConfig.name}`;
 
     this.app = new App({
-      token: botToken,
-      appToken,
+      token: instanceConfig.botToken,
+      appToken: instanceConfig.appToken,
       socketMode: true,
       logLevel: LogLevel.ERROR,
     });
 
     this.setupEventHandlers();
+  }
+
+  /** Returns the default containerConfig for groups registered under this instance */
+  getDefaultContainerConfig(): ContainerConfig | undefined {
+    return this.defaultContainerConfig;
+  }
+
+  /** Returns the instance name */
+  getInstanceName(): string {
+    return this.instanceName;
   }
 
   private setupEventHandlers(): void {
@@ -83,7 +99,7 @@ export class SlackChannel implements Channel {
       // The agent sees them alongside channel-level messages; responses
       // always go to the channel, not back into the thread.
 
-      const jid = `slack:${msg.channel}`;
+      const jid = `${this.jidPrefix}${msg.channel}`;
       const timestamp = new Date(parseFloat(msg.ts) * 1000).toISOString();
       const isGroup = msg.channel_type !== 'im';
 
@@ -142,9 +158,15 @@ export class SlackChannel implements Channel {
     try {
       const auth = await this.app.client.auth.test();
       this.botUserId = auth.user_id as string;
-      logger.info({ botUserId: this.botUserId }, 'Connected to Slack');
+      logger.info(
+        { instance: this.instanceName, botUserId: this.botUserId },
+        'Connected to Slack',
+      );
     } catch (err) {
-      logger.warn({ err }, 'Connected to Slack but failed to get bot user ID');
+      logger.warn(
+        { instance: this.instanceName, err },
+        'Connected to Slack but failed to get bot user ID',
+      );
     }
 
     this.connected = true;
@@ -157,7 +179,8 @@ export class SlackChannel implements Channel {
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
-    const channelId = jid.replace(/^slack:/, '');
+    // Strip instance-prefixed JID to get channel ID: "slack:instance:C123" -> "C123"
+    const channelId = jid.replace(this.jidPrefix, '');
 
     if (!this.connected) {
       this.outgoingQueue.push({ jid, text });
@@ -195,7 +218,7 @@ export class SlackChannel implements Channel {
   }
 
   ownsJid(jid: string): boolean {
-    return jid.startsWith('slack:');
+    return jid.startsWith(this.jidPrefix);
   }
 
   async disconnect(): Promise<void> {
@@ -216,7 +239,10 @@ export class SlackChannel implements Channel {
    */
   async syncChannelMetadata(): Promise<void> {
     try {
-      logger.info('Syncing channel metadata from Slack...');
+      logger.info(
+        { instance: this.instanceName },
+        'Syncing channel metadata from Slack...',
+      );
       let cursor: string | undefined;
       let count = 0;
 
@@ -230,7 +256,7 @@ export class SlackChannel implements Channel {
 
         for (const ch of result.channels || []) {
           if (ch.id && ch.name && ch.is_member) {
-            updateChatName(`slack:${ch.id}`, ch.name);
+            updateChatName(`${this.jidPrefix}${ch.id}`, ch.name);
             count++;
           }
         }
@@ -238,9 +264,15 @@ export class SlackChannel implements Channel {
         cursor = result.response_metadata?.next_cursor || undefined;
       } while (cursor);
 
-      logger.info({ count }, 'Slack channel metadata synced');
+      logger.info(
+        { instance: this.instanceName, count },
+        'Slack channel metadata synced',
+      );
     } catch (err) {
-      logger.error({ err }, 'Failed to sync Slack channel metadata');
+      logger.error(
+        { instance: this.instanceName, err },
+        'Failed to sync Slack channel metadata',
+      );
     }
   }
 
@@ -271,7 +303,7 @@ export class SlackChannel implements Channel {
       );
       while (this.outgoingQueue.length > 0) {
         const item = this.outgoingQueue.shift()!;
-        const channelId = item.jid.replace(/^slack:/, '');
+        const channelId = item.jid.replace(this.jidPrefix, '');
         await this.app.client.chat.postMessage({
           channel: channelId,
           text: item.text,
@@ -287,11 +319,51 @@ export class SlackChannel implements Channel {
   }
 }
 
-registerChannel('slack', (opts: ChannelOpts) => {
-  const envVars = readEnvFile(['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN']);
-  if (!envVars.SLACK_BOT_TOKEN || !envVars.SLACK_APP_TOKEN) {
-    logger.warn('Slack: SLACK_BOT_TOKEN or SLACK_APP_TOKEN not set');
-    return null;
+/**
+ * Load Slack instance configurations from data/slack-instances.json.
+ * Falls back to legacy .env tokens (SLACK_BOT_TOKEN / SLACK_APP_TOKEN)
+ * for backwards compatibility with single-instance setups.
+ */
+function loadSlackInstances(): SlackInstanceConfig[] {
+  const configPath = path.join(DATA_DIR, 'slack-instances.json');
+
+  if (fs.existsSync(configPath)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      if (Array.isArray(raw) && raw.length > 0) {
+        return raw as SlackInstanceConfig[];
+      }
+    } catch (err) {
+      logger.error({ err, configPath }, 'Failed to parse slack-instances.json');
+    }
   }
-  return new SlackChannel(opts);
-});
+
+  return [];
+}
+
+// Register a factory per Slack instance.
+// Each instance gets its own channel named "slack:{instanceName}".
+const instances = loadSlackInstances();
+
+if (instances.length > 0) {
+  for (const instance of instances) {
+    if (!instance.name || !instance.botToken || !instance.appToken) {
+      logger.warn(
+        { instance: instance.name },
+        'Slack instance missing required fields (name, botToken, appToken) — skipping',
+      );
+      continue;
+    }
+    registerChannel(`slack:${instance.name}`, (opts: ChannelOpts) => {
+      return new SlackChannel(opts, instance);
+    });
+  }
+} else {
+  // No instances configured
+  registerChannel('slack', () => {
+    logger.warn(
+      'Slack: No instances configured. Create data/slack-instances.json.',
+    );
+    return null;
+  });
+}
