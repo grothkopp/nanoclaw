@@ -27,7 +27,12 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
-import { resolveDataFile, readDataFile } from './instance-data.js';
+import {
+  resolveSecretFile,
+  readSecretFile,
+  getInstanceSkillsDir,
+  getInstanceCommandsDir,
+} from './instance-data.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -161,10 +166,26 @@ function buildVolumeMounts(
     }
   };
   syncSkillsFrom(skillsSrc);
-  // Per-instance skills overlay (overrides global skills with same name)
+  // Per-instance skills overlay: data/{instance}/skills/ then explicit skillsDir
+  const instanceName = group.containerConfig?.instanceName;
+  const conventionSkillsDir = getInstanceSkillsDir(instanceName);
+  if (conventionSkillsDir) syncSkillsFrom(conventionSkillsDir);
   if (group.containerConfig?.skillsDir) {
     syncSkillsFrom(group.containerConfig.skillsDir);
   }
+
+  // Sync commands from data/{instance}/commands/ into .claude/commands/
+  const instanceCommandsDir = getInstanceCommandsDir(instanceName);
+  if (instanceCommandsDir) {
+    const commandsDst = path.join(groupSessionsDir, 'commands');
+    fs.mkdirSync(commandsDst, { recursive: true });
+    for (const entry of fs.readdirSync(instanceCommandsDir)) {
+      const src = path.join(instanceCommandsDir, entry);
+      const dst = path.join(commandsDst, entry);
+      fs.cpSync(src, dst, { recursive: true });
+    }
+  }
+
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
@@ -240,7 +261,7 @@ function buildContainerArgs(
   const instanceName = group.containerConfig?.instanceName;
 
   // Google Workspace CLI credentials (if configured)
-  const gwsCredsPath = resolveDataFile(instanceName, 'gws-credentials.json');
+  const gwsCredsPath = resolveSecretFile(instanceName, 'gws-credentials.json');
   if (gwsCredsPath) {
     args.push('-v', `${gwsCredsPath}:/tmp/gws-credentials.json:ro`);
     args.push(
@@ -252,14 +273,14 @@ function buildContainerArgs(
   }
 
   // GitHub token for private repo access (if configured)
-  const ghToken = readDataFile(instanceName, 'github-token');
+  const ghToken = readSecretFile(instanceName, 'github-token');
   if (ghToken) {
     args.push('-e', `GITHUB_TOKEN=${ghToken}`);
     args.push('-e', `GH_TOKEN=${ghToken}`);
   }
 
   // Home Assistant token for MCP server access (if configured)
-  const haToken = readDataFile(instanceName, 'ha-token');
+  const haToken = readSecretFile(instanceName, 'ha-token');
   if (haToken) {
     args.push('-e', `HA_TOKEN=${haToken}`);
   }

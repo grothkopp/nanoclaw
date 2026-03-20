@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { logger } from './logger.js';
-import { readDataFile } from './instance-data.js';
+import { readSecretFile } from './instance-data.js';
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const WHISPER_MODEL = 'whisper-large-v3-turbo';
@@ -17,7 +17,7 @@ const tokenCache = new Map<string, string | null>();
 function getGroqToken(instanceName?: string): string | null {
   const cacheKey = instanceName ?? '__global__';
   if (tokenCache.has(cacheKey)) return tokenCache.get(cacheKey)!;
-  const token = readDataFile(instanceName, 'groq-token');
+  const token = readSecretFile(instanceName, 'groq-token');
   tokenCache.set(cacheKey, token);
   return token;
 }
