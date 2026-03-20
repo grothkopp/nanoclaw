@@ -29,6 +29,10 @@ export interface SlackInstanceConfig {
   name: string;
   botToken: string;
   appToken: string;
+  /** Override assistant name for this instance (defaults to global ASSISTANT_NAME) */
+  assistantName?: string;
+  /** Override model for this instance (defaults to global ANTHROPIC_MODEL) */
+  model?: string;
   /** Default container config applied to groups registered under this instance */
   containerConfig?: ContainerConfig;
 }
@@ -44,6 +48,7 @@ export class SlackChannel implements Channel {
 
   private instanceName: string;
   private jidPrefix: string;
+  private instanceAssistantName: string;
   private defaultContainerConfig?: ContainerConfig;
   private app: App;
   private botUserId: string | undefined;
@@ -58,6 +63,7 @@ export class SlackChannel implements Channel {
     this.opts = opts;
     this.instanceName = instanceConfig.name;
     this.jidPrefix = `slack:${instanceConfig.name}:`;
+    this.instanceAssistantName = instanceConfig.assistantName || ASSISTANT_NAME;
     this.defaultContainerConfig = instanceConfig.containerConfig;
     this.name = `slack:${instanceConfig.name}`;
 
@@ -114,7 +120,7 @@ export class SlackChannel implements Channel {
 
       let senderName: string;
       if (isBotMessage) {
-        senderName = ASSISTANT_NAME;
+        senderName = this.instanceAssistantName;
       } else {
         senderName =
           (msg.user ? await this.resolveUserName(msg.user) : undefined) ||
@@ -132,7 +138,7 @@ export class SlackChannel implements Channel {
           content.includes(mentionPattern) &&
           !TRIGGER_PATTERN.test(content)
         ) {
-          content = `@${ASSISTANT_NAME} ${content}`;
+          content = `@${this.instanceAssistantName} ${content}`;
         }
       }
 
@@ -353,6 +359,14 @@ if (instances.length > 0) {
         'Slack instance missing required fields (name, botToken, appToken) — skipping',
       );
       continue;
+    }
+    // Merge instance-level assistantName/model into containerConfig defaults
+    if (instance.assistantName || instance.model) {
+      instance.containerConfig = {
+        ...instance.containerConfig,
+        assistantName: instance.containerConfig?.assistantName ?? instance.assistantName,
+        model: instance.containerConfig?.model ?? instance.model,
+      };
     }
     registerChannel(`slack:${instance.name}`, (opts: ChannelOpts) => {
       return new SlackChannel(opts, instance);

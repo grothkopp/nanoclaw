@@ -73,6 +73,10 @@ export interface WhatsAppInstanceConfig {
   name: string;
   /** Whether the bot has its own dedicated phone number (affects message prefixing and bot detection) */
   hasOwnNumber?: boolean;
+  /** Override assistant name for this instance (defaults to global ASSISTANT_NAME) */
+  assistantName?: string;
+  /** Override model for this instance (defaults to global ANTHROPIC_MODEL) */
+  model?: string;
   /** Default container config applied to groups registered under this instance */
   containerConfig?: ContainerConfig;
 }
@@ -89,6 +93,7 @@ export class WhatsAppChannel implements Channel {
   private instanceName: string;
   private jidPrefix: string;
   private hasOwnNumber: boolean;
+  private instanceAssistantName: string;
   private authDirName: string;
   private defaultContainerConfig?: ContainerConfig;
   private sock!: WASocket;
@@ -108,6 +113,7 @@ export class WhatsAppChannel implements Channel {
     this.instanceName = instanceConfig.name;
     this.jidPrefix = `wa:${instanceConfig.name}:`;
     this.hasOwnNumber = instanceConfig.hasOwnNumber ?? false;
+    this.instanceAssistantName = instanceConfig.assistantName || ASSISTANT_NAME;
     this.authDirName = path.join('auth', instanceConfig.name);
     this.defaultContainerConfig = instanceConfig.containerConfig;
     this.name = `wa:${instanceConfig.name}`;
@@ -349,7 +355,7 @@ export class WhatsAppChannel implements Channel {
             // (even in DMs/self-chat) so we check for that.
             const isBotMessage = this.hasOwnNumber
               ? fromMe
-              : content.startsWith(`${ASSISTANT_NAME}:`);
+              : content.startsWith(`${this.instanceAssistantName}:`);
 
             this.opts.onMessage(chatJid, {
               id: msg.key.id || '',
@@ -442,7 +448,9 @@ export class WhatsAppChannel implements Channel {
     // On a shared number, prefix is also needed in DMs (including self-chat)
     // to distinguish bot output from user messages.
     // Skip only when the assistant has its own dedicated phone number.
-    const prefixed = this.hasOwnNumber ? text : `${ASSISTANT_NAME}: ${text}`;
+    const prefixed = this.hasOwnNumber
+      ? text
+      : `${this.instanceAssistantName}: ${text}`;
 
     if (!this.connected) {
       this.outgoingQueue.push({ jid, text: prefixed });
@@ -624,6 +632,14 @@ if (instances.length > 0) {
     if (!instance.name) {
       logger.warn('WhatsApp instance missing required "name" field — skipping');
       continue;
+    }
+    // Merge instance-level assistantName/model into containerConfig defaults
+    if (instance.assistantName || instance.model) {
+      instance.containerConfig = {
+        ...instance.containerConfig,
+        assistantName: instance.containerConfig?.assistantName ?? instance.assistantName,
+        model: instance.containerConfig?.model ?? instance.model,
+      };
     }
     registerChannel(`wa:${instance.name}`, (opts: ChannelOpts) => {
       return new WhatsAppChannel(opts, instance);

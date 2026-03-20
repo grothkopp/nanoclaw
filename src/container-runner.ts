@@ -216,6 +216,7 @@ function buildVolumeMounts(
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  group: RegisteredGroup,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -256,10 +257,15 @@ function buildContainerArgs(
     args.push('-e', `HA_TOKEN=${haToken}`);
   }
 
-  // Model override from .env (ANTHROPIC_MODEL → CLAUDE_MODEL inside container)
-  const { ANTHROPIC_MODEL } = readEnvFile(['ANTHROPIC_MODEL']);
-  if (ANTHROPIC_MODEL) {
-    args.push('-e', `CLAUDE_MODEL=${ANTHROPIC_MODEL}`);
+  // Model override: per-group containerConfig > .env ANTHROPIC_MODEL
+  const modelOverride = group.containerConfig?.model;
+  if (modelOverride) {
+    args.push('-e', `CLAUDE_MODEL=${modelOverride}`);
+  } else {
+    const { ANTHROPIC_MODEL } = readEnvFile(['ANTHROPIC_MODEL']);
+    if (ANTHROPIC_MODEL) {
+      args.push('-e', `CLAUDE_MODEL=${ANTHROPIC_MODEL}`);
+    }
   }
 
   // Mirror the host's auth method with a placeholder value.
@@ -313,7 +319,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, group);
 
   logger.debug(
     {

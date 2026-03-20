@@ -30,6 +30,10 @@ export interface AllowedRoot {
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
+  /** Override the assistant name for this group (defaults to global ASSISTANT_NAME) */
+  assistantName?: string;
+  /** Override the model for this group (defaults to global ANTHROPIC_MODEL) */
+  model?: string;
 }
 
 export interface RegisteredGroup {

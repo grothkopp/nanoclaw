@@ -185,7 +185,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const contextMessages =
     history.length > 0 ? [...history, ...missedMessages] : missedMessages;
 
-  const prompt = formatMessages(contextMessages, TIMEZONE, ASSISTANT_NAME);
+  const groupAssistantName = group.containerConfig?.assistantName || ASSISTANT_NAME;
+  const prompt = formatMessages(contextMessages, TIMEZONE, groupAssistantName);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -324,7 +325,7 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
-        assistantName: ASSISTANT_NAME,
+        assistantName: group.containerConfig?.assistantName || ASSISTANT_NAME,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
