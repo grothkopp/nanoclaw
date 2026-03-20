@@ -32,6 +32,7 @@ import {
   readSecretFile,
   getInstanceSkillsDir,
   getInstanceCommandsDir,
+  instanceNameFromJid,
 } from './instance-data.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
@@ -340,6 +341,18 @@ export async function runContainerAgent(
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
+
+  // Ensure instanceName is set on containerConfig (may be missing for groups
+  // registered before multi-instance support — derive from JID prefix)
+  if (!group.containerConfig?.instanceName && input.chatJid) {
+    const derived = instanceNameFromJid(input.chatJid);
+    if (derived) {
+      group = {
+        ...group,
+        containerConfig: { ...group.containerConfig, instanceName: derived },
+      };
+    }
+  }
 
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
