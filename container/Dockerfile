@@ -3,7 +3,7 @@
 
 FROM node:22-slim
 
-# Install system dependencies for Chromium
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
@@ -24,7 +24,51 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     curl \
     git \
+    jq \
+    pandoc \
+    poppler-utils \
+    weasyprint \
+    ripgrep \
+    fd-find \
+    direnv \
+    hyperfine \
+    pipx \
+    python3-venv \
+    unzip \
+    && ln -s /usr/bin/fdfind /usr/bin/fd \
     && rm -rf /var/lib/apt/lists/*
+
+# Install uv (fast Python package manager)
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+
+# Install DuckDB CLI
+RUN curl -fsSL "https://github.com/duckdb/duckdb/releases/latest/download/duckdb_cli-linux-amd64.zip" \
+    -o /tmp/duckdb.zip && unzip /tmp/duckdb.zip -d /usr/local/bin/ && rm /tmp/duckdb.zip
+
+# Install just (command runner)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+
+# Install Rust CLI tools from GitHub releases
+RUN set -eux; \
+    # xh (HTTP client)
+    XH_VER=$(curl -s https://api.github.com/repos/ducaale/xh/releases/latest | grep '"tag_name"' | cut -d'"' -f4); \
+    curl -fsSL "https://github.com/ducaale/xh/releases/download/${XH_VER}/xh-${XH_VER}-x86_64-unknown-linux-musl.tar.gz" \
+    | tar xz --strip-components=1 -C /usr/local/bin/ --wildcards '*/xh'; \
+    # eza (modern ls)
+    EZA_VER=$(curl -s https://api.github.com/repos/eza-community/eza/releases/latest | grep '"tag_name"' | cut -d'"' -f4); \
+    curl -fsSL "https://github.com/eza-community/eza/releases/download/${EZA_VER}/eza_x86_64-unknown-linux-musl.tar.gz" \
+    | tar xz -C /usr/local/bin/; \
+    # sd (modern sed)
+    SD_VER=$(curl -s https://api.github.com/repos/chmln/sd/releases/latest | grep '"tag_name"' | cut -d'"' -f4); \
+    curl -fsSL "https://github.com/chmln/sd/releases/download/${SD_VER}/sd-${SD_VER}-x86_64-unknown-linux-musl.tar.gz" \
+    | tar xz -C /usr/local/bin/; \
+    # procs (modern ps)
+    PROCS_VER=$(curl -s https://api.github.com/repos/dalance/procs/releases/latest | grep '"tag_name"' | cut -d'"' -f4); \
+    curl -fsSL "https://github.com/dalance/procs/releases/download/${PROCS_VER}/procs-${PROCS_VER}-x86_64-linux.zip" \
+    -o /tmp/procs.zip && unzip /tmp/procs.zip -d /usr/local/bin/ && rm /tmp/procs.zip
+
+# Install semgrep via pipx (needs to run as root for global install)
+RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install semgrep
 
 # Set Chromium path for agent-browser
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
