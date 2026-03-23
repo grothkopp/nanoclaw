@@ -10,6 +10,8 @@ import { readSecretFile } from './instance-data.js';
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const WHISPER_MODEL = 'whisper-large-v3-turbo';
+const MAX_RETRIES = 3;
+const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 
 // Cache tokens per instance to avoid re-reading files
 const tokenCache = new Map<string, string | null>();
@@ -42,45 +44,75 @@ export async function transcribeAudio(
     return null;
   }
 
-  try {
-    const fileBuffer = fs.readFileSync(filePath);
-    const fileName = path.basename(filePath);
+  const fileBuffer = fs.readFileSync(filePath);
+  const fileName = path.basename(filePath);
 
-    // Build multipart form data manually using the Blob/File API (Node 22+)
-    const formData = new FormData();
-    formData.append('file', new Blob([fileBuffer]), fileName);
-    formData.append('model', WHISPER_MODEL);
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const formData = new FormData();
+      formData.append('file', new Blob([fileBuffer]), fileName);
+      formData.append('model', WHISPER_MODEL);
 
-    const response = await fetch(GROQ_API_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      body: formData,
-    });
+      const response = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      logger.warn(
-        { status: response.status, error: errorText, filePath },
-        'Groq transcription API error',
-      );
+      if (!response.ok) {
+        const errorText = await response.text();
+
+        if (
+          attempt < MAX_RETRIES &&
+          RETRYABLE_STATUS_CODES.has(response.status)
+        ) {
+          const delay = 1000 * 2 ** attempt;
+          logger.warn(
+            { status: response.status, attempt, delay, filePath },
+            'Groq transcription failed, retrying',
+          );
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+
+        logger.warn(
+          { status: response.status, error: errorText, filePath, attempt },
+          'Groq transcription API error',
+        );
+        return null;
+      }
+
+      const result = (await response.json()) as { text?: string };
+      const text = result.text?.trim();
+
+      if (text) {
+        logger.info(
+          {
+            filePath,
+            textLength: text.length,
+            ...(attempt > 0 ? { retriesNeeded: attempt } : {}),
+          },
+          'Audio transcribed successfully',
+        );
+      }
+
+      return text || null;
+    } catch (err) {
+      if (attempt < MAX_RETRIES) {
+        const delay = 1000 * 2 ** attempt;
+        logger.warn(
+          { err, attempt, delay, filePath },
+          'Groq transcription failed, retrying',
+        );
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      logger.warn({ err, filePath, attempt }, 'Failed to transcribe audio after retries');
       return null;
     }
-
-    const result = (await response.json()) as { text?: string };
-    const text = result.text?.trim();
-
-    if (text) {
-      logger.info(
-        { filePath, textLength: text.length },
-        'Audio transcribed successfully',
-      );
-    }
-
-    return text || null;
-  } catch (err) {
-    logger.warn({ err, filePath }, 'Failed to transcribe audio');
-    return null;
   }
+
+  return null;
 }

@@ -34,6 +34,7 @@ RUN apt-get update && apt-get install -y \
     hyperfine \
     pipx \
     python3-venv \
+    imagemagick \
     unzip \
     && ln -s /usr/bin/fdfind /usr/bin/fd \
     && rm -rf /var/lib/apt/lists/*
