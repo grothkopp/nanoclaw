@@ -1,0 +1,17 @@
+#!/bin/bash
+# Wrapper for gh CLI that fetches the GitHub token on-demand from the
+# credential proxy. The token only exists in the environment for the
+# duration of the gh command.
+
+INSTANCE_PARAM=""
+if [ -n "$NANOCLAW_INSTANCE" ]; then
+  INSTANCE_PARAM="?instance=$NANOCLAW_INSTANCE"
+fi
+
+TOKEN=$(curl -sf "${CREDENTIAL_PROXY}/_cred/github${INSTANCE_PARAM}" 2>/dev/null)
+if [ -z "$TOKEN" ]; then
+  echo "Error: GitHub token not configured" >&2
+  exit 1
+fi
+
+GH_TOKEN="$TOKEN" gh-real "$@"

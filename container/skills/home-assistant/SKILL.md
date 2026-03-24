@@ -1,25 +1,23 @@
 # Home Assistant
 
-Home Assistant runs on the local network. Use the REST API via curl/Bash. The token is in the `HA_TOKEN` environment variable.
-
-Base URL: `http://host.docker.internal:8123`
+Home Assistant runs on the local network. Use the REST API via curl/Bash. Authentication is handled automatically by the credential proxy via the `$HA_URL` environment variable.
 
 ## REST API
 
 ```bash
 # Get a specific entity state
-curl -s -H "Authorization: Bearer $HA_TOKEN" http://host.docker.internal:8123/api/states/sensor.model_y_battery_level
+curl -s $HA_URL/api/states/sensor.model_y_battery_level
 
 # List all entities (large response — pipe through jq to filter)
-curl -s -H "Authorization: Bearer $HA_TOKEN" http://host.docker.internal:8123/api/states | jq '.[].entity_id'
+curl -s $HA_URL/api/states | jq '.[].entity_id'
 
 # Find entities by keyword
-curl -s -H "Authorization: Bearer $HA_TOKEN" http://host.docker.internal:8123/api/states | jq -r '.[].entity_id' | grep -i tesla
+curl -s $HA_URL/api/states | jq -r '.[].entity_id' | grep -i tesla
 
 # Call a service (e.g., turn on a light)
-curl -s -X POST -H "Authorization: Bearer $HA_TOKEN" -H "Content-Type: application/json" \
+curl -s -X POST -H "Content-Type: application/json" \
   -d '{"entity_id": "light.living_room"}' \
-  http://host.docker.internal:8123/api/services/light/turn_on
+  $HA_URL/api/services/light/turn_on
 ```
 
 ## Key Use Cases

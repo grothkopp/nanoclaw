@@ -1,0 +1,29 @@
+#!/bin/bash
+# Wrapper for gws CLI that fetches credentials on-demand from the credential
+# proxy and removes them immediately after execution. The credentials file
+# only exists for the duration of the gws command.
+
+set -e
+
+GWS_CREDS_FILE="/tmp/.gws-credentials-$$.json"
+trap 'rm -f "$GWS_CREDS_FILE"' EXIT INT TERM
+
+INSTANCE_PARAM=""
+if [ -n "$NANOCLAW_INSTANCE" ]; then
+  INSTANCE_PARAM="?instance=$NANOCLAW_INSTANCE"
+fi
+
+# Fetch credentials from proxy
+CREDS=$(curl -sf "${CREDENTIAL_PROXY}/_cred/gws-credentials.json${INSTANCE_PARAM}" 2>/dev/null)
+if [ -z "$CREDS" ]; then
+  echo "Error: Google Workspace credentials not configured" >&2
+  exit 1
+fi
+
+# Write credentials (PID-scoped filename prevents races with parallel calls)
+echo "$CREDS" > "$GWS_CREDS_FILE"
+chmod 600 "$GWS_CREDS_FILE"
+
+# Run the real gws CLI with credentials
+GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE="$GWS_CREDS_FILE" \
+  gws-real "$@"

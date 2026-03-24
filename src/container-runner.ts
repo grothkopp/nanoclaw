@@ -28,8 +28,6 @@ import {
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
 import {
-  resolveSecretFile,
-  readSecretFile,
   getInstanceSkillsDir,
   getInstanceCommandsDir,
   instanceNameFromJid,
@@ -258,32 +256,15 @@ function buildContainerArgs(
     `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
   );
 
-  // Per-instance credential resolution: checks data/{instanceName}/ first, falls back to data/
+  // Instance name for per-instance credential resolution via the proxy
   const instanceName = group.containerConfig?.instanceName;
 
-  // Google Workspace CLI credentials (if configured)
-  const gwsCredsPath = resolveSecretFile(instanceName, 'gws-credentials.json');
-  if (gwsCredsPath) {
-    args.push('-v', `${gwsCredsPath}:/tmp/gws-credentials.json:ro`);
-    args.push(
-      '-e',
-      'GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/tmp/gws-credentials.json',
-    );
-    args.push('-e', 'GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/tmp/gws-config');
-    args.push('-e', 'GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file');
-  }
-
-  // GitHub token for private repo access (if configured)
-  const ghToken = readSecretFile(instanceName, 'github-token');
-  if (ghToken) {
-    args.push('-e', `GITHUB_TOKEN=${ghToken}`);
-    args.push('-e', `GH_TOKEN=${ghToken}`);
-  }
-
-  // Home Assistant token for MCP server access (if configured)
-  const haToken = readSecretFile(instanceName, 'ha-token');
-  if (haToken) {
-    args.push('-e', `HA_TOKEN=${haToken}`);
+  // Credential proxy URL — containers fetch all secrets through this endpoint.
+  // No real secrets are passed via env vars or file mounts.
+  const credentialProxy = `http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`;
+  args.push('-e', `CREDENTIAL_PROXY=${credentialProxy}`);
+  if (instanceName) {
+    args.push('-e', `NANOCLAW_INSTANCE=${instanceName}`);
   }
 
   // Model override: per-group containerConfig > .env ANTHROPIC_MODEL
