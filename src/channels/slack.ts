@@ -55,7 +55,9 @@ const MIME_TO_EXT: Record<string, string> = {
 
 function mimeToExtension(mimetype: string): string {
   const base = mimetype.split(';')[0].trim();
-  return MIME_TO_EXT[mimetype] || MIME_TO_EXT[base] || base.split('/')[1] || 'bin';
+  return (
+    MIME_TO_EXT[mimetype] || MIME_TO_EXT[base] || base.split('/')[1] || 'bin'
+  );
 }
 
 function mimeToMediaType(
@@ -98,9 +100,7 @@ export function downloadWithAuth(
           }
 
           if (res.statusCode !== 200) {
-            reject(
-              new Error(`Download failed: ${res.statusCode}`),
-            );
+            reject(new Error(`Download failed: ${res.statusCode}`));
             res.resume();
             return;
           }
@@ -233,8 +233,7 @@ export class SlackChannel implements Channel {
       if (!groups[jid]) return;
 
       const isBotMessage =
-        !!((msg as GenericMessageEvent).bot_id) ||
-        msg.user === this.botUserId;
+        !!(msg as GenericMessageEvent).bot_id || msg.user === this.botUserId;
 
       let senderName: string;
       if (isBotMessage) {
@@ -278,7 +277,7 @@ export class SlackChannel implements Channel {
             );
 
             // Transcribe audio files
-            if (media && (media.type === 'audio')) {
+            if (media && media.type === 'audio') {
               const transcript = await transcribeAudio(
                 media.path,
                 this.instanceName,

@@ -1130,8 +1130,7 @@ describe('SlackChannel', () => {
         }),
       );
 
-      const msg = (opts.onMessage as ReturnType<typeof vi.fn>).mock
-        .calls[0][1];
+      const msg = (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(msg.media.type).toBe('image');
     });
 
@@ -1147,15 +1146,12 @@ describe('SlackChannel', () => {
       await triggerMessageEvent(
         createMessageEvent({
           text: '',
-          files: [
-            { ...TEST_FILE, mimetype: 'audio/ogg', name: 'voice.ogg' },
-          ],
+          files: [{ ...TEST_FILE, mimetype: 'audio/ogg', name: 'voice.ogg' }],
         }),
       );
 
       expect(transcribeAudio).toHaveBeenCalled();
-      const msg = (opts.onMessage as ReturnType<typeof vi.fn>).mock
-        .calls[0][1];
+      const msg = (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(msg.content).toContain('[Voice transcription:');
       expect(msg.content).toContain('Hello this is a voice note');
     });
