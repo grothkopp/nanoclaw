@@ -196,9 +196,7 @@ describe('transcribeAudio', () => {
 
   it('gives up after MAX_RETRIES on network errors', async () => {
     vi.useFakeTimers();
-    const mockFetch = vi
-      .fn()
-      .mockRejectedValue(new Error('fetch failed'));
+    const mockFetch = vi.fn().mockRejectedValue(new Error('fetch failed'));
     vi.stubGlobal('fetch', mockFetch);
 
     const promise = transcribeAudio(AUDIO_FILE);

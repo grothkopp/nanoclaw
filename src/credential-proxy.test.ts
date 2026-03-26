@@ -48,7 +48,10 @@ vi.mock('fs', async () => {
     default: {
       ...actual,
       readFileSync: vi.fn((filePath: string, encoding?: string) => {
-        if (typeof filePath === 'string' && filePath.startsWith('/fake/path/')) {
+        if (
+          typeof filePath === 'string' &&
+          filePath.startsWith('/fake/path/')
+        ) {
           const filename = filePath.replace('/fake/path/', '');
           const s = ((globalThis as any).__proxyTestState ??= {
             env: {},

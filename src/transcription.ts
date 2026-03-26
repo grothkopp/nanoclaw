@@ -109,7 +109,10 @@ export async function transcribeAudio(
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }
-      logger.warn({ err, filePath, attempt }, 'Failed to transcribe audio after retries');
+      logger.warn(
+        { err, filePath, attempt },
+        'Failed to transcribe audio after retries',
+      );
       return null;
     }
   }

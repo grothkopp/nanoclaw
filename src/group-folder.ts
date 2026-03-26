@@ -136,10 +136,9 @@ export function migrateGroupFolders(instanceName: string, db: any): void {
       const newFolder = `${prefix}${folder}`;
 
       // Update DB tables
-      db.prepare('UPDATE registered_groups SET folder = ? WHERE folder = ?').run(
-        newFolder,
-        folder,
-      );
+      db.prepare(
+        'UPDATE registered_groups SET folder = ? WHERE folder = ?',
+      ).run(newFolder, folder);
       db.prepare(
         'UPDATE scheduled_tasks SET group_folder = ? WHERE group_folder = ?',
       ).run(newFolder, folder);

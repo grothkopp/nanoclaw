@@ -34,12 +34,7 @@ export function resolveSecretFile(
   filename: string,
 ): string | null {
   if (instanceName) {
-    const instancePath = path.join(
-      DATA_DIR,
-      instanceName,
-      'secrets',
-      filename,
-    );
+    const instancePath = path.join(DATA_DIR, instanceName, 'secrets', filename);
     if (fs.existsSync(instancePath)) return instancePath;
   }
   const globalPath = path.join(DATA_DIR, 'secrets', filename);

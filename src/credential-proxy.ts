@@ -59,9 +59,7 @@ function resolveCredential(
 // Request helpers
 // ---------------------------------------------------------------------------
 
-function collectBody(
-  req: IncomingMessage,
-): Promise<Buffer> {
+function collectBody(req: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     req.on('data', (c) => chunks.push(c));
@@ -142,7 +140,10 @@ function handleCredEndpoint(
   const instanceName = resolveInstance(req, url);
 
   const service = services.find((s) => s.name === credName);
-  if (!service || (service.type !== 'token-server' && service.type !== 'file-server')) {
+  if (
+    !service ||
+    (service.type !== 'token-server' && service.type !== 'file-server')
+  ) {
     res.writeHead(404);
     res.end('Not found');
     return;
@@ -226,10 +227,7 @@ async function handleProxyEndpoint(
   if (service.header && service.headerFormat) {
     const headerName = service.header.toLowerCase();
     delete headers[headerName];
-    headers[headerName] = service.headerFormat.replace(
-      '{value}',
-      credential,
-    );
+    headers[headerName] = service.headerFormat.replace('{value}', credential);
   }
 
   // Build upstream path: remaining path + original query string (minus instance param)
@@ -288,14 +286,12 @@ export function startCredentialProxy(
 
         // Default: Anthropic reverse proxy (backward compatible)
         const body = await collectBody(req);
-        const headers: Record<
-          string,
-          string | number | string[] | undefined
-        > = {
-          ...(req.headers as Record<string, string>),
-          host: anthropicUpstream.host,
-          'content-length': body.length,
-        };
+        const headers: Record<string, string | number | string[] | undefined> =
+          {
+            ...(req.headers as Record<string, string>),
+            host: anthropicUpstream.host,
+            'content-length': body.length,
+          };
 
         stripHopByHop(headers);
 

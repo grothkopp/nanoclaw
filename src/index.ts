@@ -71,6 +71,9 @@ let messageLoopRunning = false;
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
+// Track which chatJids had messages sent via IPC during the current container run.
+// Used to suppress duplicate output when the agent already sent via send_message.
+const ipcMessageSent = new Set<string>();
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -174,7 +177,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // For non-main groups, check if trigger is required and present
   if (!isMainGroup && group.requiresTrigger !== false) {
     const triggerRe = group.trigger
-      ? new RegExp(`^${group.trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
+      ? new RegExp(
+          `^${group.trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`,
+          'i',
+        )
       : TRIGGER_PATTERN;
     const allowlistCfg = loadSenderAllowlist();
     const hasTrigger = missedMessages.some(
@@ -227,6 +233,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
+  // Clear IPC send tracking for this chat before starting the agent
+  ipcMessageSent.delete(chatJid);
+
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
@@ -238,7 +247,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        await channel.sendMessage(chatJid, text);
+        // If the agent already sent messages via send_message IPC,
+        // suppress the final output to avoid duplicates.
+        if (ipcMessageSent.has(chatJid)) {
+          logger.debug(
+            { group: group.name },
+            'Suppressing agent output — already sent via IPC send_message',
+          );
+        } else {
+          await channel.sendMessage(chatJid, text);
+        }
         outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
@@ -415,7 +433,10 @@ async function startMessageLoop(): Promise<void> {
           // context when a trigger eventually arrives.
           if (needsTrigger) {
             const triggerRe = group.trigger
-              ? new RegExp(`^${group.trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
+              ? new RegExp(
+                  `^${group.trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`,
+                  'i',
+                )
               : TRIGGER_PATTERN;
             const allowlistCfg = loadSenderAllowlist();
             const hasTrigger = groupMessages.some(
@@ -633,6 +654,7 @@ async function main(): Promise<void> {
     sendMessage: (jid, text) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      ipcMessageSent.add(jid);
       return channel.sendMessage(jid, text);
     },
     registeredGroups: () => registeredGroups,

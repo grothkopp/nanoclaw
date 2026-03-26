@@ -10,6 +10,7 @@ vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Jonesy',
   TRIGGER_PATTERN: /^@Jonesy\b/i,
   DATA_DIR: '/tmp/nanoclaw-test-data',
+  GROUPS_DIR: '/tmp/nanoclaw-test-groups',
 }));
 
 // Mock logger
@@ -26,6 +27,20 @@ vi.mock('../logger.js', () => ({
 vi.mock('../db.js', () => ({
   updateChatName: vi.fn(),
 }));
+
+// Mock group-folder
+vi.mock('../group-folder.js', () => ({
+  resolveGroupFolderPath: vi.fn(
+    (folder: string) => `/tmp/nanoclaw-test-groups/${folder}`,
+  ),
+}));
+
+// Mock transcription
+vi.mock('../transcription.js', () => ({
+  transcribeAudio: vi.fn().mockResolvedValue(null),
+}));
+
+// downloadWithAuth is mocked via channel._downloadFn in each test
 
 // --- @slack/bolt mock ---
 
@@ -75,7 +90,7 @@ vi.mock('@slack/bolt', () => ({
   LogLevel: { ERROR: 'error' },
 }));
 
-// Mock fs (for loadSlackInstances)
+// Mock fs (for loadSlackInstances and media saving)
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
   return {
@@ -84,6 +99,8 @@ vi.mock('fs', async () => {
       ...actual,
       existsSync: vi.fn(() => false),
       readFileSync: vi.fn(),
+      mkdirSync: vi.fn(),
+      writeFileSync: vi.fn(),
     },
   };
 });
@@ -94,6 +111,8 @@ import {
   SlackInstanceConfig,
 } from './slack.js';
 import { updateChatName } from '../db.js';
+import { transcribeAudio } from '../transcription.js';
+import fs from 'fs';
 
 const TEST_INSTANCE: SlackInstanceConfig = {
   name: 'test',
@@ -130,6 +149,14 @@ function createMessageEvent(overrides: {
   threadTs?: string;
   subtype?: string;
   botId?: string;
+  files?: Array<{
+    id: string;
+    name: string | null;
+    mimetype: string;
+    url_private?: string;
+    url_private_download?: string;
+    size: number;
+  }>;
 }) {
   return {
     channel: overrides.channel ?? 'C0123456789',
@@ -140,6 +167,7 @@ function createMessageEvent(overrides: {
     thread_ts: overrides.threadTs,
     subtype: overrides.subtype,
     bot_id: overrides.botId,
+    files: overrides.files,
   };
 }
 
@@ -900,6 +928,255 @@ describe('SlackChannel', () => {
     it('has instance-prefixed name', () => {
       const channel = new SlackChannel(createTestOpts(), TEST_INSTANCE);
       expect(channel.name).toBe('slack:test');
+    });
+  });
+
+  // --- File attachments ---
+
+  describe('file attachments', () => {
+    const TEST_FILE = {
+      id: 'F0TEST123',
+      name: 'report.pdf',
+      mimetype: 'application/pdf',
+      url_private: 'https://files.slack.com/files-pri/T123/report.pdf',
+      url_private_download:
+        'https://files.slack.com/files-pri/T123/download/report.pdf',
+      size: 1024,
+    };
+
+    function createChannelWithMockDownload(
+      opts: SlackChannelOpts,
+      mockFn: ReturnType<typeof vi.fn>,
+    ) {
+      const channel = new SlackChannel(opts, TEST_INSTANCE);
+      channel._downloadFn = mockFn as any;
+      return channel;
+    }
+
+    const successMock = (content = 'fake-pdf-content') =>
+      vi.fn().mockResolvedValue(Buffer.from(content));
+    const htmlLoginMock = () =>
+      vi.fn().mockRejectedValue(new Error('Download returned HTML login page'));
+    const errorMock = () =>
+      vi.fn().mockRejectedValue(new Error('Download failed: 403'));
+
+    it('downloads file and attaches media to message', async () => {
+      const dl = successMock();
+      const opts = createTestOpts();
+      const channel = createChannelWithMockDownload(opts, dl);
+      await channel.connect();
+
+      await triggerMessageEvent(
+        createMessageEvent({
+          text: 'Here is the report',
+          files: [TEST_FILE],
+        }),
+      );
+
+      const onMessage = opts.onMessage as ReturnType<typeof vi.fn>;
+      expect(onMessage).toHaveBeenCalledTimes(1);
+
+      const msg = onMessage.mock.calls[0][1];
+      expect(msg.media).toBeDefined();
+      expect(msg.media.type).toBe('document');
+      expect(msg.media.mimetype).toBe('application/pdf');
+      expect(msg.media.fileName).toBe('report.pdf');
+      expect(msg.media.containerPath).toBe(
+        '/workspace/group/media/F0TEST123_report.pdf',
+      );
+      expect(msg.content).toBe('Here is the report');
+    });
+
+    it('saves file to disk with original filename', async () => {
+      const dl = successMock();
+      const opts = createTestOpts();
+      const channel = createChannelWithMockDownload(opts, dl);
+      await channel.connect();
+
+      await triggerMessageEvent(
+        createMessageEvent({ text: 'doc', files: [TEST_FILE] }),
+      );
+
+      expect(fs.mkdirSync).toHaveBeenCalledWith(
+        expect.stringContaining('media'),
+        { recursive: true },
+      );
+      expect(fs.writeFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('F0TEST123_report.pdf'),
+        expect.any(Buffer),
+      );
+    });
+
+    it('calls download function with correct url and token', async () => {
+      const dl = successMock();
+      const opts = createTestOpts();
+      const channel = createChannelWithMockDownload(opts, dl);
+      await channel.connect();
+
+      await triggerMessageEvent(
+        createMessageEvent({ text: 'file', files: [TEST_FILE] }),
+      );
+
+      expect(dl).toHaveBeenCalledWith(
+        TEST_FILE.url_private_download,
+        'xoxb-test-token',
+        'application/pdf',
+      );
+    });
+
+    it('detects HTML login page and rejects download', async () => {
+      const dl = htmlLoginMock();
+      const opts = createTestOpts();
+      const channel = createChannelWithMockDownload(opts, dl);
+      await channel.connect();
+
+      await triggerMessageEvent(
+        createMessageEvent({ text: 'file', files: [TEST_FILE] }),
+      );
+
+      const onMessage = opts.onMessage as ReturnType<typeof vi.fn>;
+      const msg = onMessage.mock.calls[0][1];
+      expect(msg.media).toBeUndefined();
+    });
+
+    it('falls back to url_private when url_private_download is missing', async () => {
+      const dl = successMock();
+      const opts = createTestOpts();
+      const channel = createChannelWithMockDownload(opts, dl);
+      await channel.connect();
+
+      const fileWithoutDownload = {
+        ...TEST_FILE,
+        url_private_download: undefined,
+      };
+      await triggerMessageEvent(
+        createMessageEvent({
+          text: 'file',
+          files: [fileWithoutDownload as any],
+        }),
+      );
+
+      expect(dl).toHaveBeenCalledWith(
+        TEST_FILE.url_private,
+        'xoxb-test-token',
+        'application/pdf',
+      );
+    });
+
+    it('handles download failure gracefully', async () => {
+      const dl = errorMock();
+      const opts = createTestOpts();
+      const channel = createChannelWithMockDownload(opts, dl);
+      await channel.connect();
+
+      await triggerMessageEvent(
+        createMessageEvent({ text: 'file', files: [TEST_FILE] }),
+      );
+
+      const onMessage = opts.onMessage as ReturnType<typeof vi.fn>;
+      const msg = onMessage.mock.calls[0][1];
+      expect(msg.media).toBeUndefined();
+      expect(msg.content).toBe('file');
+    });
+
+    it('processes file_share subtype messages', async () => {
+      const dl = successMock();
+      const opts = createTestOpts();
+      const channel = createChannelWithMockDownload(opts, dl);
+      await channel.connect();
+
+      await triggerMessageEvent(
+        createMessageEvent({
+          text: 'Shared a file',
+          subtype: 'file_share',
+          files: [TEST_FILE],
+        }),
+      );
+
+      const onMessage = opts.onMessage as ReturnType<typeof vi.fn>;
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(onMessage.mock.calls[0][1].media).toBeDefined();
+    });
+
+    it('processes messages with files but no text', async () => {
+      const dl = successMock();
+      const opts = createTestOpts();
+      const channel = createChannelWithMockDownload(opts, dl);
+      await channel.connect();
+
+      await triggerMessageEvent(
+        createMessageEvent({
+          text: undefined as any,
+          files: [TEST_FILE],
+        }),
+      );
+
+      const onMessage = opts.onMessage as ReturnType<typeof vi.fn>;
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(onMessage.mock.calls[0][1].media).toBeDefined();
+      expect(onMessage.mock.calls[0][1].content).toBe('');
+    });
+
+    it('maps image mimetype to image media type', async () => {
+      const dl = successMock('png-data');
+      const opts = createTestOpts();
+      const channel = createChannelWithMockDownload(opts, dl);
+      await channel.connect();
+
+      await triggerMessageEvent(
+        createMessageEvent({
+          text: 'pic',
+          files: [{ ...TEST_FILE, mimetype: 'image/png', name: 'photo.png' }],
+        }),
+      );
+
+      const msg = (opts.onMessage as ReturnType<typeof vi.fn>).mock
+        .calls[0][1];
+      expect(msg.media.type).toBe('image');
+    });
+
+    it('transcribes audio files', async () => {
+      const dl = successMock('audio-data');
+      vi.mocked(transcribeAudio).mockResolvedValueOnce(
+        'Hello this is a voice note',
+      );
+      const opts = createTestOpts();
+      const channel = createChannelWithMockDownload(opts, dl);
+      await channel.connect();
+
+      await triggerMessageEvent(
+        createMessageEvent({
+          text: '',
+          files: [
+            { ...TEST_FILE, mimetype: 'audio/ogg', name: 'voice.ogg' },
+          ],
+        }),
+      );
+
+      expect(transcribeAudio).toHaveBeenCalled();
+      const msg = (opts.onMessage as ReturnType<typeof vi.fn>).mock
+        .calls[0][1];
+      expect(msg.content).toContain('[Voice transcription:');
+      expect(msg.content).toContain('Hello this is a voice note');
+    });
+
+    it('uses fileId as name when filename is null', async () => {
+      const dl = successMock();
+      const opts = createTestOpts();
+      const channel = createChannelWithMockDownload(opts, dl);
+      await channel.connect();
+
+      await triggerMessageEvent(
+        createMessageEvent({
+          text: 'file',
+          files: [{ ...TEST_FILE, name: null }],
+        }),
+      );
+
+      expect(fs.writeFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('F0TEST123.pdf'),
+        expect.any(Buffer),
+      );
     });
   });
 });
