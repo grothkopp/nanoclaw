@@ -23,24 +23,30 @@ Microsoft Teams exposes messaging via the Microsoft Graph API. The Graph subscri
 
 ## Decisions
 
-### 1. Polling with Graph Delta Queries
+### 1. Polling with Per-Chat Delta Queries (Delegated Permissions Only)
 
-**Decision**: Use `GET /me/chats/getAllMessages/delta` for message polling rather than per-chat polling or subscriptions.
+**Decision**: Use `GET /me/chats` to discover active chats, then `GET /chats/{chatId}/messages/delta` per registered chat for efficient message polling. All API calls use **delegated permissions only** (`Chat.Read`, `Chat.ReadWrite`, `ChatMessage.Send`).
 
-**Rationale**: The delta endpoint returns only new/changed messages across all chats since the last request, using a `deltaLink` token. This is efficient (single API call per poll cycle) and avoids the broken subscription system. Per-chat polling would require N API calls for N registered chats.
+**Rationale**: The tenant-wide endpoints (`/chats/getAllMessages` and `/chats/getAllMessages/delta`) require **application-only** permissions, admin consent, Microsoft approval, and a paid metered API model — making them unsuitable. Per-chat delta queries work with standard delegated `Chat.Read` permission and return only new/changed messages via a `deltaLink` token per chat. The number of API calls per poll cycle is O(N) where N is registered chats, but delta responses are lightweight (empty when no new messages).
+
+**Polling flow**:
+1. On startup: `GET /me/chats` to sync chat metadata
+2. Per poll cycle: for each registered chat, call `GET /chats/{chatId}/messages/delta` using the stored `deltaLink` (or initial query if no link exists)
+3. Store the returned `deltaLink` per chat for the next cycle
 
 **Alternatives considered**:
+- *`/chats/getAllMessages`*: Single API call for all chats, but requires application-only permissions, admin consent, Microsoft approval, and paid metered access. Not viable for delegated-only requirement.
 - *Graph subscriptions*: Require public HTTPS endpoint, known reliability issues, short expiry (60 min for chat messages). Rejected per user requirement.
-- *Per-chat polling*: `GET /chats/{chatId}/messages` for each registered chat. Simpler but O(N) API calls. Rejected for efficiency.
 - *Bot Framework*: Would require a Bot Framework registration and webhook endpoint. More complexity than needed for polling-based approach.
 
-### 2. Authentication via MSAL with Device Code Flow
+### 2. Authentication via MSAL with Device Code Flow (Delegated Only)
 
-**Decision**: Use `@azure/msal-node` with device code flow for interactive setup, then cache refresh tokens for headless operation. For "agent has own account" mode, use client credentials flow (app-only permissions).
+**Decision**: Use `@azure/msal-node` with device code flow for interactive setup, then cache refresh tokens for headless operation. Both "own account" and "shared account" modes use delegated permissions — the difference is only which Microsoft account authenticates (the bot's dedicated account vs. the user's account).
 
-**Rationale**: Device code flow works in headless/CLI environments (like NanoClaw setup). Client credentials flow enables fully autonomous bot accounts. Token refresh is handled by MSAL's token cache, persisted to `store/auth/{instanceName}/msal-cache.json`.
+**Rationale**: Device code flow works in headless/CLI environments (like NanoClaw setup). Delegated permissions are sufficient for all operations (`Chat.Read`, `Chat.ReadWrite`, `ChatMessage.Send`). Token refresh is handled by MSAL's token cache, persisted to `store/auth/{instanceName}/msal-cache.json`. An Azure AD app registration is required to obtain a client ID and enable the device code flow.
 
 **Alternatives considered**:
+- *Client credentials flow (app-only)*: Would enable fully autonomous operation without user tokens, but requires tenant-wide `Chat.Read.All` permission, admin consent, and Microsoft approval for protected APIs. Rejected to keep delegated-only.
 - *Authorization code flow*: Requires a redirect URI and temporary HTTP server. More complex for CLI setup.
 - *Username/password flow (ROPC)*: Deprecated by Microsoft, doesn't support MFA.
 
@@ -73,7 +79,7 @@ Microsoft Teams exposes messaging via the Microsoft Graph API. The Graph subscri
 ## Risks / Trade-offs
 
 - **Polling latency**: Message delivery has up to `POLL_INTERVAL` (default 5s) delay. → Acceptable trade-off vs. broken subscriptions. Interval is configurable per instance.
-- **Graph API rate limits**: Microsoft throttles at ~60 requests/minute for delegated permissions. → Delta queries minimize calls (1 per poll cycle regardless of chat count). Monitor `Retry-After` headers.
+- **Graph API rate limits**: Microsoft throttles at ~60 requests/minute for delegated permissions. → Per-chat delta queries are lightweight (empty response when no new messages). With many registered chats, the poll interval may need to increase. Monitor `Retry-After` headers.
+- **O(N) API calls per poll**: Unlike a single getAllMessages call, per-chat delta requires one call per registered chat. → For typical NanoClaw usage (1-20 chats), this is well within rate limits. Delta responses for idle chats are very small.
 - **Token expiry**: Refresh tokens can expire after 90 days of inactivity. → MSAL handles refresh automatically; setup skill warns about re-authentication if token cache is invalid.
-- **Delegated vs. app permissions**: `ChatMessage.Read` (delegated) requires user context; `ChatMessage.Read.All` (app) requires admin consent. → Support both via instance config `authMode: "delegated" | "app"`.
-- **Azure AD app registration complexity**: Users must create an Azure AD app with correct permissions. → Setup skill provides step-by-step guidance and validates the configuration.
+- **Azure AD app registration required**: Users must create an Azure AD app registration to get a client ID for the device code flow. → Setup skill provides step-by-step guidance and validates the configuration. The app only needs delegated permissions (no admin consent required for `Chat.Read`, `Chat.ReadWrite`, `ChatMessage.Send`, `User.Read`).

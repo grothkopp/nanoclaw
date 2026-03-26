@@ -6,17 +6,17 @@
 
 ## 2. Authentication
 
-- [ ] 2.1 Implement MSAL confidential client setup with device code flow (delegated) and client credentials flow (app-only)
+- [ ] 2.1 Implement MSAL public client setup with device code flow (delegated permissions only, both own-account and shared-account modes)
 - [ ] 2.2 Implement token cache persistence to `store/auth/{instanceName}/msal-cache.json`
-- [ ] 2.3 Implement Graph client initialization with token acquisition callback
+- [ ] 2.3 Implement Graph client initialization with delegated token acquisition callback
 - [ ] 2.4 Add client secret resolution via `resolveSecretFile()` (`data/{instance}/secrets/teams-client-secret`)
 
 ## 3. Core Channel Implementation
 
 - [ ] 3.1 Implement `TeamsChannel` class with `Channel` interface (connect, disconnect, sendMessage)
 - [ ] 3.2 Implement JID construction: `teams:{instanceName}:{chatId}` and update JID regex in `src/instance-data.ts` to include `teams` prefix
-- [ ] 3.3 Implement message polling loop using `/chats/getAllMessages/delta` with deltaLink persistence
-- [ ] 3.4 Handle delta token invalidation (410 Gone → fresh initial query)
+- [ ] 3.3 Implement per-chat message polling loop using `GET /chats/{chatId}/messages/delta` (delegated `Chat.Read`) with per-chat deltaLink persistence
+- [ ] 3.4 Handle delta token invalidation (410 Gone → fresh initial query per chat)
 - [ ] 3.5 Implement message parsing: extract sender, content, timestamp, attachments from Graph message objects
 - [ ] 3.6 Implement bot message detection — own account mode (compare `from.user.id` to bot user ID)
 - [ ] 3.7 Implement bot message detection — shared account mode (assistant name prefix check)
@@ -55,7 +55,7 @@
 
 - [ ] 9.1 Create `.claude/skills/add-teams/` skill with Azure AD app registration walkthrough
 - [ ] 9.2 Implement device code flow authentication in the skill
-- [ ] 9.3 Implement own-account vs shared-account selection and `authMode` configuration
+- [ ] 9.3 Implement own-account vs shared-account selection (both use delegated device code flow, difference is which Microsoft account authenticates)
 - [ ] 9.4 Implement connection validation via `GET /me` test call
 - [ ] 9.5 Write instance config to `data/teams-instances.json` and client secret to `data/{instance}/secrets/`
 

@@ -12,11 +12,11 @@ The Teams channel SHALL self-register with the channel registry when its module 
 - **THEN** no Teams channel factory is registered and no error is thrown
 
 ### Requirement: Instance configuration
-Each Teams instance SHALL be configured via `data/teams-instances.json` with the following fields: `name` (string, required), `tenantId` (string, required), `clientId` (string, required), `hasOwnAccount` (boolean, optional, default false), `authMode` ("delegated" | "app", optional, default "delegated"), `pollInterval` (number in ms, optional), `assistantName` (string, optional), `model` (string, optional), `singleGroupDir` (string, optional), `containerConfig` (object, optional).
+Each Teams instance SHALL be configured via `data/teams-instances.json` with the following fields: `name` (string, required), `tenantId` (string, required), `clientId` (string, required), `hasOwnAccount` (boolean, optional, default false), `pollInterval` (number in ms, optional, default 5000), `assistantName` (string, optional), `model` (string, optional), `singleGroupDir` (string, optional), `containerConfig` (object, optional). All instances use delegated permissions only.
 
 #### Scenario: Minimal instance configuration
 - **WHEN** an instance config contains `name`, `tenantId`, and `clientId`
-- **THEN** the channel starts with defaults: `hasOwnAccount: false`, `authMode: "delegated"`, `pollInterval: 5000`
+- **THEN** the channel starts with defaults: `hasOwnAccount: false`, `pollInterval: 5000`
 
 #### Scenario: Instance config with container overrides
 - **WHEN** an instance config includes `assistantName`, `model`, and `containerConfig`
@@ -33,20 +33,24 @@ The Teams channel SHALL use JIDs in the format `teams:{instanceName}:{chatId}` w
 - **WHEN** `instanceNameFromJid()` is called with a Teams JID
 - **THEN** it returns the instance name (the JID regex in `instance-data.ts` SHALL include `teams` as a valid prefix)
 
-### Requirement: Message polling via delta queries
-The channel SHALL poll for new messages using the Microsoft Graph delta endpoint (`/chats/getAllMessages/delta`). It SHALL store the `deltaLink` token between polls and use it to retrieve only new messages.
+### Requirement: Message polling via per-chat delta queries
+The channel SHALL poll for new messages using per-chat delta queries (`GET /chats/{chatId}/messages/delta`) with delegated `Chat.Read` permission. It SHALL store a `deltaLink` token per registered chat and use it to retrieve only new messages. The channel SHALL NOT use `/chats/getAllMessages` or its delta variant (these require application-only permissions and paid metered API access).
 
-#### Scenario: Initial poll
-- **WHEN** no delta token exists (first startup)
-- **THEN** the channel performs an initial delta query, processes recent messages, and stores the returned `deltaLink`
+#### Scenario: Initial poll for a chat
+- **WHEN** no delta token exists for a registered chat (first startup or newly registered)
+- **THEN** the channel performs an initial delta query for that chat, processes recent messages, and stores the returned `deltaLink`
 
 #### Scenario: Subsequent poll
-- **WHEN** a valid `deltaLink` exists from a previous poll
+- **WHEN** a valid `deltaLink` exists for a registered chat from a previous poll
 - **THEN** the channel uses it to fetch only messages created since the last poll
 
 #### Scenario: Delta token invalidation
-- **WHEN** the Graph API returns a `410 Gone` response for the delta token
-- **THEN** the channel discards the token and performs a fresh initial delta query
+- **WHEN** the Graph API returns a `410 Gone` response for a chat's delta token
+- **THEN** the channel discards that chat's token and performs a fresh initial delta query
+
+#### Scenario: Multiple registered chats
+- **WHEN** multiple chats are registered
+- **THEN** the channel polls each chat independently with its own delta token, one API call per chat per poll cycle
 
 ### Requirement: Message sending
 The channel SHALL send text messages to Teams chats via `POST /chats/{chatId}/messages`. Messages exceeding 28,000 characters SHALL be split into multiple messages.
@@ -125,8 +129,8 @@ The channel SHALL download file attachments from Teams messages via the Graph AP
 - **WHEN** a message contains a file reference (SharePoint/OneDrive link)
 - **THEN** the channel downloads the file via the Graph API drive item endpoint
 
-### Requirement: Authentication token management
-The channel SHALL use MSAL for token acquisition and refresh. Tokens SHALL be cached in `store/auth/{instanceName}/msal-cache.json`. The channel SHALL handle token refresh transparently.
+### Requirement: Authentication token management (delegated only)
+The channel SHALL use MSAL for delegated token acquisition and refresh. Tokens SHALL be cached in `store/auth/{instanceName}/msal-cache.json`. The channel SHALL handle token refresh transparently. Required delegated permissions: `Chat.Read`, `Chat.ReadWrite`, `ChatMessage.Send`, `User.Read`. An Azure AD app registration is required to provide the client ID for the device code flow.
 
 #### Scenario: Valid cached token
 - **WHEN** a valid (non-expired) access token exists in the MSAL cache
@@ -134,7 +138,7 @@ The channel SHALL use MSAL for token acquisition and refresh. Tokens SHALL be ca
 
 #### Scenario: Expired access token with valid refresh token
 - **WHEN** the access token has expired but a valid refresh token exists
-- **THEN** MSAL silently acquires a new access token
+- **THEN** MSAL silently acquires a new access token using delegated refresh
 
 #### Scenario: All tokens expired
 - **WHEN** both access and refresh tokens are expired or invalid

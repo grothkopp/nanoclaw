@@ -12,7 +12,7 @@ The setup skill SHALL provide step-by-step instructions for creating an Azure AD
 
 #### Scenario: Required permissions listed
 - **WHEN** the user reaches the app registration step
-- **THEN** the skill lists required permissions: `Chat.Read`, `Chat.ReadWrite`, `ChatMessage.Read`, `ChatMessage.Send`, `User.Read` (delegated) or `Chat.Read.All`, `ChatMessage.Read.All` (app-only for own-account mode)
+- **THEN** the skill lists required delegated permissions: `Chat.Read`, `Chat.ReadWrite`, `ChatMessage.Send`, `User.Read` and instructs the user to enable "Allow public client flows" for device code flow support
 
 ### Requirement: Device code authentication flow
 The setup skill SHALL authenticate the user via MSAL device code flow, displaying the code and verification URL.
@@ -40,12 +40,12 @@ The setup skill SHALL create or update `data/teams-instances.json` with the new 
 The setup skill SHALL ask whether the agent has its own Microsoft account or shares the user's account.
 
 #### Scenario: Own account selected
-- **WHEN** the user indicates the agent has its own account
-- **THEN** `hasOwnAccount` is set to `true` and the skill configures client credentials flow (`authMode: "app"`)
+- **WHEN** the user indicates the agent has its own dedicated Microsoft account
+- **THEN** `hasOwnAccount` is set to `true` and the skill prompts for device code authentication with the bot's account (delegated permissions, same flow as shared)
 
 #### Scenario: Shared account selected
 - **WHEN** the user indicates the agent shares their account
-- **THEN** `hasOwnAccount` is set to `false` and the skill configures delegated auth (`authMode: "delegated"`)
+- **THEN** `hasOwnAccount` is set to `false` and the skill prompts for device code authentication with the user's account (delegated permissions)
 
 ### Requirement: Connection validation
 The setup skill SHALL validate the configuration by making a test Graph API call after authentication.
