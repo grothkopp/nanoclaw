@@ -123,7 +123,11 @@ export function migrateGroupFolders(instanceName: string, db: any): void {
     .all() as Array<{ jid: string; folder: string }>;
 
   // Filter to groups that belong to this instance (by JID prefix)
-  const instanceJidPrefixes = [`wa:${instanceName}:`, `slack:${instanceName}:`, `teams:${instanceName}:`];
+  const instanceJidPrefixes = [
+    `wa:${instanceName}:`,
+    `slack:${instanceName}:`,
+    `teams:${instanceName}:`,
+  ];
   const toMigrate = (groups as Array<{ jid: string; folder: string }>).filter(
     (g) => instanceJidPrefixes.some((p) => g.jid.startsWith(p)),
   );

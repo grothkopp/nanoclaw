@@ -60,13 +60,25 @@ vi.mock('fs', () => ({
 const mockMsal = vi.hoisted(() => ({
   acquireTokenSilent: vi.fn().mockResolvedValue({
     accessToken: 'mock-access-token',
-    account: { homeAccountId: 'test', environment: 'test', tenantId: 'test', username: 'test@test.com' },
+    account: {
+      homeAccountId: 'test',
+      environment: 'test',
+      tenantId: 'test',
+      username: 'test@test.com',
+    },
   }),
   acquireTokenByDeviceCode: vi.fn(),
   getTokenCache: vi.fn().mockReturnValue({
-    getAllAccounts: vi.fn().mockResolvedValue([
-      { homeAccountId: 'test', environment: 'test', tenantId: 'test', username: 'test@test.com' },
-    ]),
+    getAllAccounts: vi
+      .fn()
+      .mockResolvedValue([
+        {
+          homeAccountId: 'test',
+          environment: 'test',
+          tenantId: 'test',
+          username: 'test@test.com',
+        },
+      ]),
   }),
 }));
 
@@ -98,7 +110,11 @@ vi.mock('@microsoft/microsoft-graph-client', () => ({
   },
 }));
 
-import { TeamsChannel, type TeamsInstanceConfig } from './teams.js';
+import {
+  TeamsChannel,
+  type TeamsInstanceConfig,
+  markdownToTeamsHtml,
+} from './teams.js';
 
 // --- Test Setup ---
 
@@ -110,7 +126,9 @@ function makeOpts() {
   };
 }
 
-function makeConfig(overrides: Partial<TeamsInstanceConfig> = {}): TeamsInstanceConfig {
+function makeConfig(
+  overrides: Partial<TeamsInstanceConfig> = {},
+): TeamsInstanceConfig {
   return {
     name: 'work',
     tenantId: 'tenant-123',
@@ -155,7 +173,10 @@ describe('TeamsChannel', () => {
       channel = new TeamsChannel(opts, makeConfig({ hasOwnAccount: true }));
 
       // Simulate connect to set botUserId
-      mockGraphApi.get.mockResolvedValueOnce({ id: 'bot-user-id', displayName: 'Bot' });
+      mockGraphApi.get.mockResolvedValueOnce({
+        id: 'bot-user-id',
+        displayName: 'Bot',
+      });
       await channel.connect();
 
       const registeredGroup = {
@@ -170,14 +191,16 @@ describe('TeamsChannel', () => {
 
       // Simulate polling with a message from the bot
       mockGraphApi.get.mockResolvedValueOnce({
-        value: [{
-          id: 'msg1',
-          messageType: 'message',
-          body: { contentType: 'text', content: 'Hello from bot' },
-          from: { user: { id: 'bot-user-id', displayName: 'Bot' } },
-          createdDateTime: '2024-01-01T00:00:00Z',
-          chatType: 'oneOnOne',
-        }],
+        value: [
+          {
+            id: 'msg1',
+            messageType: 'message',
+            body: { contentType: 'text', content: 'Hello from bot' },
+            from: { user: { id: 'bot-user-id', displayName: 'Bot' } },
+            createdDateTime: '2024-01-01T00:00:00Z',
+            chatType: 'oneOnOne',
+          },
+        ],
         '@odata.deltaLink': 'delta-link-1',
       });
 
@@ -197,7 +220,10 @@ describe('TeamsChannel', () => {
     it('should not flag messages from other users as bot messages', async () => {
       channel = new TeamsChannel(opts, makeConfig({ hasOwnAccount: true }));
 
-      mockGraphApi.get.mockResolvedValueOnce({ id: 'bot-user-id', displayName: 'Bot' });
+      mockGraphApi.get.mockResolvedValueOnce({
+        id: 'bot-user-id',
+        displayName: 'Bot',
+      });
       await channel.connect();
 
       opts.registeredGroups.mockReturnValue({
@@ -210,14 +236,16 @@ describe('TeamsChannel', () => {
       });
 
       mockGraphApi.get.mockResolvedValueOnce({
-        value: [{
-          id: 'msg2',
-          messageType: 'message',
-          body: { contentType: 'text', content: 'Hello from user' },
-          from: { user: { id: 'other-user-id', displayName: 'Alice' } },
-          createdDateTime: '2024-01-01T00:00:01Z',
-          chatType: 'oneOnOne',
-        }],
+        value: [
+          {
+            id: 'msg2',
+            messageType: 'message',
+            body: { contentType: 'text', content: 'Hello from user' },
+            from: { user: { id: 'other-user-id', displayName: 'Alice' } },
+            createdDateTime: '2024-01-01T00:00:01Z',
+            chatType: 'oneOnOne',
+          },
+        ],
         '@odata.deltaLink': 'delta-link-2',
       });
 
@@ -238,7 +266,10 @@ describe('TeamsChannel', () => {
     it('should detect bot messages by assistant name prefix when hasOwnAccount is false', async () => {
       channel = new TeamsChannel(opts, makeConfig({ hasOwnAccount: false }));
 
-      mockGraphApi.get.mockResolvedValueOnce({ id: 'user-id', displayName: 'User' });
+      mockGraphApi.get.mockResolvedValueOnce({
+        id: 'user-id',
+        displayName: 'User',
+      });
       await channel.connect();
 
       opts.registeredGroups.mockReturnValue({
@@ -251,14 +282,16 @@ describe('TeamsChannel', () => {
       });
 
       mockGraphApi.get.mockResolvedValueOnce({
-        value: [{
-          id: 'msg3',
-          messageType: 'message',
-          body: { contentType: 'text', content: 'Andy: Hello from bot' },
-          from: { user: { id: 'user-id', displayName: 'User' } },
-          createdDateTime: '2024-01-01T00:00:00Z',
-          chatType: 'oneOnOne',
-        }],
+        value: [
+          {
+            id: 'msg3',
+            messageType: 'message',
+            body: { contentType: 'text', content: 'Andy: Hello from bot' },
+            from: { user: { id: 'user-id', displayName: 'User' } },
+            createdDateTime: '2024-01-01T00:00:00Z',
+            chatType: 'oneOnOne',
+          },
+        ],
         '@odata.deltaLink': 'delta-link-3',
       });
 
@@ -276,7 +309,10 @@ describe('TeamsChannel', () => {
     it('should not flag regular messages as bot messages in shared mode', async () => {
       channel = new TeamsChannel(opts, makeConfig({ hasOwnAccount: false }));
 
-      mockGraphApi.get.mockResolvedValueOnce({ id: 'user-id', displayName: 'User' });
+      mockGraphApi.get.mockResolvedValueOnce({
+        id: 'user-id',
+        displayName: 'User',
+      });
       await channel.connect();
 
       opts.registeredGroups.mockReturnValue({
@@ -289,14 +325,16 @@ describe('TeamsChannel', () => {
       });
 
       mockGraphApi.get.mockResolvedValueOnce({
-        value: [{
-          id: 'msg4',
-          messageType: 'message',
-          body: { contentType: 'text', content: 'Regular message' },
-          from: { user: { id: 'other-user', displayName: 'Bob' } },
-          createdDateTime: '2024-01-01T00:00:00Z',
-          chatType: 'oneOnOne',
-        }],
+        value: [
+          {
+            id: 'msg4',
+            messageType: 'message',
+            body: { contentType: 'text', content: 'Regular message' },
+            from: { user: { id: 'other-user', displayName: 'Bob' } },
+            createdDateTime: '2024-01-01T00:00:00Z',
+            chatType: 'oneOnOne',
+          },
+        ],
         '@odata.deltaLink': 'delta-link-4',
       });
 
@@ -314,49 +352,63 @@ describe('TeamsChannel', () => {
   });
 
   describe('Message sending and chunking', () => {
-    it('should send short messages in a single API call', async () => {
+    it('should send short messages as HTML via marked', async () => {
       channel = new TeamsChannel(opts, makeConfig({ hasOwnAccount: true }));
-      mockGraphApi.get.mockResolvedValueOnce({ id: 'bot-id', displayName: 'Bot' });
+      mockGraphApi.get.mockResolvedValueOnce({
+        id: 'bot-id',
+        displayName: 'Bot',
+      });
       await channel.connect();
 
       await channel.sendMessage('teams:work:chat123', 'Hello!');
 
       expect(mockGraphApi.post).toHaveBeenCalledTimes(1);
-      expect(mockGraphApi.post).toHaveBeenCalledWith({
-        body: { contentType: 'text', content: 'Hello!' },
-      });
+      const call = mockGraphApi.post.mock.calls[0][0];
+      expect(call.body.contentType).toBe('html');
+      expect(call.body.content).toContain('Hello!');
     });
 
     it('should prefix messages with assistant name in shared mode', async () => {
-      channel = new TeamsChannel(opts, makeConfig({
-        hasOwnAccount: false,
-        assistantName: 'Andy',
-      }));
-      mockGraphApi.get.mockResolvedValueOnce({ id: 'user-id', displayName: 'User' });
+      channel = new TeamsChannel(
+        opts,
+        makeConfig({
+          hasOwnAccount: false,
+          assistantName: 'Andy',
+        }),
+      );
+      mockGraphApi.get.mockResolvedValueOnce({
+        id: 'user-id',
+        displayName: 'User',
+      });
       await channel.connect();
 
       await channel.sendMessage('teams:work:chat123', 'Hello!');
 
-      expect(mockGraphApi.post).toHaveBeenCalledWith({
-        body: { contentType: 'text', content: 'Andy: Hello!' },
-      });
+      const call = mockGraphApi.post.mock.calls[0][0];
+      expect(call.body.content).toContain('Andy: Hello!');
     });
 
     it('should not prefix messages in own account mode', async () => {
       channel = new TeamsChannel(opts, makeConfig({ hasOwnAccount: true }));
-      mockGraphApi.get.mockResolvedValueOnce({ id: 'bot-id', displayName: 'Bot' });
+      mockGraphApi.get.mockResolvedValueOnce({
+        id: 'bot-id',
+        displayName: 'Bot',
+      });
       await channel.connect();
 
       await channel.sendMessage('teams:work:chat123', 'Hello!');
 
-      expect(mockGraphApi.post).toHaveBeenCalledWith({
-        body: { contentType: 'text', content: 'Hello!' },
-      });
+      const call = mockGraphApi.post.mock.calls[0][0];
+      expect(call.body.content).toContain('Hello!');
+      expect(call.body.content).not.toContain('Andy:');
     });
 
     it('should chunk messages exceeding 28,000 characters', async () => {
       channel = new TeamsChannel(opts, makeConfig({ hasOwnAccount: true }));
-      mockGraphApi.get.mockResolvedValueOnce({ id: 'bot-id', displayName: 'Bot' });
+      mockGraphApi.get.mockResolvedValueOnce({
+        id: 'bot-id',
+        displayName: 'Bot',
+      });
       await channel.connect();
 
       const longMessage = 'A'.repeat(56_001);
@@ -370,7 +422,10 @@ describe('TeamsChannel', () => {
   describe('Group vs 1:1 chat detection', () => {
     it('should report group chats as isGroup: true', async () => {
       channel = new TeamsChannel(opts, makeConfig());
-      mockGraphApi.get.mockResolvedValueOnce({ id: 'user-id', displayName: 'User' });
+      mockGraphApi.get.mockResolvedValueOnce({
+        id: 'user-id',
+        displayName: 'User',
+      });
       await channel.connect();
 
       opts.registeredGroups.mockReturnValue({
@@ -383,14 +438,16 @@ describe('TeamsChannel', () => {
       });
 
       mockGraphApi.get.mockResolvedValueOnce({
-        value: [{
-          id: 'msg5',
-          messageType: 'message',
-          body: { contentType: 'text', content: 'Group message' },
-          from: { user: { id: 'other', displayName: 'Alice' } },
-          createdDateTime: '2024-01-01T00:00:00Z',
-          chatType: 'group',
-        }],
+        value: [
+          {
+            id: 'msg5',
+            messageType: 'message',
+            body: { contentType: 'text', content: 'Group message' },
+            from: { user: { id: 'other', displayName: 'Alice' } },
+            createdDateTime: '2024-01-01T00:00:00Z',
+            chatType: 'group',
+          },
+        ],
         '@odata.deltaLink': 'delta-link-5',
       });
 
@@ -408,7 +465,10 @@ describe('TeamsChannel', () => {
 
     it('should report 1:1 chats as isGroup: false', async () => {
       channel = new TeamsChannel(opts, makeConfig());
-      mockGraphApi.get.mockResolvedValueOnce({ id: 'user-id', displayName: 'User' });
+      mockGraphApi.get.mockResolvedValueOnce({
+        id: 'user-id',
+        displayName: 'User',
+      });
       await channel.connect();
 
       opts.registeredGroups.mockReturnValue({
@@ -421,14 +481,16 @@ describe('TeamsChannel', () => {
       });
 
       mockGraphApi.get.mockResolvedValueOnce({
-        value: [{
-          id: 'msg6',
-          messageType: 'message',
-          body: { contentType: 'text', content: 'DM message' },
-          from: { user: { id: 'other', displayName: 'Bob' } },
-          createdDateTime: '2024-01-01T00:00:00Z',
-          chatType: 'oneOnOne',
-        }],
+        value: [
+          {
+            id: 'msg6',
+            messageType: 'message',
+            body: { contentType: 'text', content: 'DM message' },
+            from: { user: { id: 'other', displayName: 'Bob' } },
+            createdDateTime: '2024-01-01T00:00:00Z',
+            chatType: 'oneOnOne',
+          },
+        ],
         '@odata.deltaLink': 'delta-link-6',
       });
 
@@ -448,7 +510,10 @@ describe('TeamsChannel', () => {
   describe('Timestamp-based polling', () => {
     it('should track last seen timestamp for subsequent polls', async () => {
       channel = new TeamsChannel(opts, makeConfig());
-      mockGraphApi.get.mockResolvedValueOnce({ id: 'user-id', displayName: 'User' });
+      mockGraphApi.get.mockResolvedValueOnce({
+        id: 'user-id',
+        displayName: 'User',
+      });
       await channel.connect();
 
       opts.registeredGroups.mockReturnValue({
@@ -462,14 +527,16 @@ describe('TeamsChannel', () => {
 
       // Poll returns a message with a timestamp
       mockGraphApi.get.mockResolvedValueOnce({
-        value: [{
-          id: 'msg-ts',
-          messageType: 'message',
-          body: { contentType: 'text', content: 'Hello' },
-          from: { user: { id: 'other', displayName: 'Alice' } },
-          createdDateTime: '2024-06-15T10:30:00Z',
-          chatType: 'oneOnOne',
-        }],
+        value: [
+          {
+            id: 'msg-ts',
+            messageType: 'message',
+            body: { contentType: 'text', content: 'Hello' },
+            from: { user: { id: 'other', displayName: 'Alice' } },
+            createdDateTime: '2024-06-15T10:30:00Z',
+            chatType: 'oneOnOne',
+          },
+        ],
       });
 
       const client = (channel as any).createGraphClient();
@@ -482,7 +549,10 @@ describe('TeamsChannel', () => {
 
     it('should skip system messages and deleted messages', async () => {
       channel = new TeamsChannel(opts, makeConfig());
-      mockGraphApi.get.mockResolvedValueOnce({ id: 'user-id', displayName: 'User' });
+      mockGraphApi.get.mockResolvedValueOnce({
+        id: 'user-id',
+        displayName: 'User',
+      });
       await channel.connect();
 
       opts.registeredGroups.mockReturnValue({
@@ -543,9 +613,159 @@ describe('TeamsChannel', () => {
 
       expect('teams:work:19:abc@thread.v2'.match(regex)?.[1]).toBe('work');
       expect('teams:corp:chat123'.match(regex)?.[1]).toBe('corp');
-      expect('wa:personal:12345@s.whatsapp.net'.match(regex)?.[1]).toBe('personal');
+      expect('wa:personal:12345@s.whatsapp.net'.match(regex)?.[1]).toBe(
+        'personal',
+      );
       expect('slack:aicx:C123'.match(regex)?.[1]).toBe('aicx');
       expect('legacy@g.us'.match(regex)).toBeNull();
     });
+  });
+});
+
+describe('markdownToTeamsHtml', () => {
+  it('should convert bold and italic', () => {
+    expect(markdownToTeamsHtml('**bold**')).toContain('<strong>bold</strong>');
+    expect(markdownToTeamsHtml('*italic*')).toContain('<em>italic</em>');
+    const both = markdownToTeamsHtml('***both***');
+    expect(both).toContain('<strong>');
+    expect(both).toContain('<em>');
+    expect(both).toContain('both');
+  });
+
+  it('should convert strikethrough', () => {
+    expect(markdownToTeamsHtml('~~deleted~~')).toContain(
+      '<strike>deleted</strike>',
+    );
+  });
+
+  it('should convert inline code', () => {
+    expect(markdownToTeamsHtml('use `foo()` here')).toContain(
+      'use <code>foo()</code> here',
+    );
+  });
+
+  it('should convert fenced code blocks', () => {
+    const md = '```js\nconst x = 1;\n```';
+    const html = markdownToTeamsHtml(md);
+    expect(html).toContain('<pre>');
+    expect(html).toContain('const x = 1;');
+    expect(html).toContain('</pre>');
+  });
+
+  it('should convert links', () => {
+    expect(markdownToTeamsHtml('[Google](https://google.com)')).toContain(
+      '<a href="https://google.com">Google</a>',
+    );
+  });
+
+  it('should convert unordered lists', () => {
+    const md = '- one\n- two\n- three';
+    const html = markdownToTeamsHtml(md);
+    expect(html).toContain('<ul>');
+    expect(html).toContain('<li>one</li>');
+    expect(html).toContain('<li>two</li>');
+    expect(html).toContain('</ul>');
+  });
+
+  it('should convert ordered lists', () => {
+    const md = '1. first\n2. second';
+    const html = markdownToTeamsHtml(md);
+    expect(html).toContain('<ol>');
+    expect(html).toContain('<li>first</li>');
+    expect(html).toContain('<li>second</li>');
+    expect(html).toContain('</ol>');
+  });
+
+  it('should convert blockquotes', () => {
+    const html = markdownToTeamsHtml('> quoted text');
+    expect(html).toContain('<blockquote>');
+    expect(html).toContain('quoted text');
+    expect(html).toContain('</blockquote>');
+  });
+
+  it('should convert markdown tables to HTML tables', () => {
+    const md = '| Name | Age |\n|------|-----|\n| Alice | 30 |\n| Bob | 25 |';
+    const html = markdownToTeamsHtml(md);
+    expect(html).toContain('<table>');
+    expect(html).toContain('<th>Name</th>');
+    expect(html).toContain('<th>Age</th>');
+    expect(html).toContain('<td>Alice</td>');
+    expect(html).toContain('<td>Bob</td>');
+    expect(html).toContain('</table>');
+  });
+
+  it('should use <th> for header row and <td> for data rows', () => {
+    const md = '| H1 | H2 |\n|---|---|\n| d1 | d2 |';
+    const html = markdownToTeamsHtml(md);
+    expect(html).toContain('<th>H1</th>');
+    expect(html).toContain('<th>H2</th>');
+    expect(html).toContain('<td>d1</td>');
+    expect(html).toContain('<td>d2</td>');
+    expect(html).not.toContain('---');
+  });
+
+  it('should close table when followed by non-table content', () => {
+    const md = '| A | B |\n|---|---|\n| 1 | 2 |\n\nSome text after.';
+    const html = markdownToTeamsHtml(md);
+    expect(html).toContain('</table>');
+    expect(html).toContain('Some text after.');
+  });
+
+  it('should convert headers to bold (not <h1> tags)', () => {
+    const html = markdownToTeamsHtml('## My Header');
+    expect(html).toContain('<strong>My Header</strong>');
+    expect(html).not.toContain('<h2>');
+  });
+
+  it('should preserve text content across lines', () => {
+    const html = markdownToTeamsHtml('line one\nline two');
+    expect(html).toContain('line one');
+    expect(html).toContain('line two');
+  });
+
+  it('should convert double newlines to separate paragraphs', () => {
+    const html = markdownToTeamsHtml('para one\n\npara two');
+    expect(html).toContain('para one');
+    expect(html).toContain('para two');
+    // marked creates separate <p> tags
+    expect((html.match(/<p>/g) || []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('should escape HTML entities in the source', () => {
+    const html = markdownToTeamsHtml('x < y && a > b');
+    expect(html).toContain('&lt;');
+    expect(html).toContain('&gt;');
+    expect(html).toContain('&amp;');
+  });
+
+  it('should handle mixed content', () => {
+    const md = '**Title**\n\nSome text with `code`.\n\n- item 1\n- item 2';
+    const html = markdownToTeamsHtml(md);
+    expect(html).toContain('<strong>Title</strong>');
+    expect(html).toContain('<code>code</code>');
+    expect(html).toContain('<ul>');
+    expect(html).toContain('<li>item 1</li>');
+  });
+
+  it('should send HTML content type in messages', async () => {
+    const testOpts = makeOpts();
+    const ch = new TeamsChannel(testOpts, makeConfig({ hasOwnAccount: true }));
+    mockGraphApi.get.mockResolvedValueOnce({
+      id: 'bot-id',
+      displayName: 'Bot',
+    });
+    await ch.connect();
+
+    await ch.sendMessage('teams:work:chat123', '**hello**');
+
+    expect(mockGraphApi.post).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          contentType: 'html',
+        }),
+      }),
+    );
+
+    await ch.disconnect();
   });
 });

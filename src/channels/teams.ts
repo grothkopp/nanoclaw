@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { marked } from 'marked';
 import { Client as GraphClient } from '@microsoft/microsoft-graph-client';
 import {
   PublicClientApplication,
@@ -59,7 +60,9 @@ const MIME_TO_EXT: Record<string, string> = {
 
 function mimeToExtension(mimetype: string): string {
   const base = mimetype.split(';')[0].trim();
-  return MIME_TO_EXT[mimetype] || MIME_TO_EXT[base] || base.split('/')[1] || 'bin';
+  return (
+    MIME_TO_EXT[mimetype] || MIME_TO_EXT[base] || base.split('/')[1] || 'bin'
+  );
 }
 
 function mimeToMediaType(
@@ -70,6 +73,44 @@ function mimeToMediaType(
   if (major === 'audio') return 'audio';
   if (major === 'video') return 'video';
   return 'document';
+}
+
+/**
+ * Convert markdown to Teams-safe HTML using the `marked` library.
+ *
+ * Teams supports: <strong>, <em>, <strike>, <pre>, <code>, <br>,
+ * <ul>, <ol>, <li>, <p>, <a>, <blockquote>, <table>, <thead>, <tbody>,
+ * <tr>, <th>, <td>
+ *
+ * NOT supported: <h1>-<h6> (in chat messages), <hr>, <div>, inline CSS.
+ * These are replaced with safe equivalents after parsing.
+ */
+export function markdownToTeamsHtml(md: string): string {
+  // Use marked to convert markdown → HTML (synchronous mode)
+  let html = marked.parse(md, { async: false }) as string;
+
+  // Post-process: replace Teams-unsupported tags with safe equivalents
+
+  // Headers → <strong> (h1-h6 don't render in Teams chat messages)
+  html = html.replace(
+    /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi,
+    '<strong>$1</strong><br>',
+  );
+
+  // <hr> → <br> (not supported)
+  html = html.replace(/<hr\s*\/?>/gi, '<br>');
+
+  // <del> → <strike> (marked uses <del> for ~~strikethrough~~)
+  html = html.replace(/<del>/g, '<strike>');
+  html = html.replace(/<\/del>/g, '</strike>');
+
+  // Remove <div> wrappers (stripped by Teams)
+  html = html.replace(/<\/?div[^>]*>/gi, '');
+
+  // Clean up excessive whitespace
+  html = html.replace(/\n{3,}/g, '\n\n').trim();
+
+  return html;
 }
 
 export interface TeamsInstanceConfig {
@@ -259,20 +300,23 @@ export class TeamsChannel implements Channel {
       ? text
       : `${this.instanceAssistantName}: ${text}`;
 
+    // Convert markdown to Teams-safe HTML
+    const html = markdownToTeamsHtml(prefixed);
+
     try {
       const client = this.createGraphClient();
 
       // Chunk at 28,000 characters
-      if (prefixed.length <= MAX_MESSAGE_LENGTH) {
+      if (html.length <= MAX_MESSAGE_LENGTH) {
         await client.api(`/chats/${chatId}/messages`).post({
-          body: { contentType: 'text', content: prefixed },
+          body: { contentType: 'html', content: html },
         });
       } else {
-        for (let i = 0; i < prefixed.length; i += MAX_MESSAGE_LENGTH) {
+        for (let i = 0; i < html.length; i += MAX_MESSAGE_LENGTH) {
           await client.api(`/chats/${chatId}/messages`).post({
             body: {
-              contentType: 'text',
-              content: prefixed.slice(i, i + MAX_MESSAGE_LENGTH),
+              contentType: 'html',
+              content: html.slice(i, i + MAX_MESSAGE_LENGTH),
             },
           });
         }
@@ -367,7 +411,11 @@ export class TeamsChannel implements Channel {
     if (!this.polling) return;
 
     // Respect Retry-After or backoff
-    const delay = Math.max(this.pollInterval, this.retryAfterMs, this.backoffMs);
+    const delay = Math.max(
+      this.pollInterval,
+      this.retryAfterMs,
+      this.backoffMs,
+    );
     this.retryAfterMs = 0; // Reset after use
 
     this.pollTimer = setTimeout(async () => {
@@ -436,7 +484,9 @@ export class TeamsChannel implements Channel {
           'Filter not supported, falling back to unfiltered query',
         );
         response = await client
-          .api(`/chats/${chatId}/messages?$top=50&$orderby=createdDateTime desc`)
+          .api(
+            `/chats/${chatId}/messages?$top=50&$orderby=createdDateTime desc`,
+          )
           .get();
       } else {
         throw err;
@@ -484,7 +534,9 @@ export class TeamsChannel implements Channel {
     // Skip deleted messages
     if (msg.deletedDateTime) return;
 
-    const body = msg.body as { contentType?: string; content?: string } | undefined;
+    const body = msg.body as
+      | { contentType?: string; content?: string }
+      | undefined;
     if (!body?.content) return;
 
     // Extract plain text from HTML content
@@ -511,7 +563,8 @@ export class TeamsChannel implements Channel {
     const isGroup = chatType === 'group' || chatType === 'meeting';
 
     // Report metadata for chat discovery
-    const timestamp = (msg.createdDateTime as string) || new Date().toISOString();
+    const timestamp =
+      (msg.createdDateTime as string) || new Date().toISOString();
     this.opts.onChatMetadata(jid, timestamp, undefined, 'teams', isGroup);
 
     // Only deliver to registered groups
@@ -530,13 +583,15 @@ export class TeamsChannel implements Channel {
 
     // Download file attachments
     let media: NewMessageMedia | undefined;
-    const attachments = msg.attachments as Array<{
-      id?: string;
-      contentType?: string;
-      contentUrl?: string;
-      name?: string;
-      content?: string;
-    }> | undefined;
+    const attachments = msg.attachments as
+      | Array<{
+          id?: string;
+          contentType?: string;
+          contentUrl?: string;
+          name?: string;
+          content?: string;
+        }>
+      | undefined;
 
     if (attachments && attachments.length > 0 && groups[jid]) {
       const attachment = attachments[0];
@@ -589,7 +644,8 @@ export class TeamsChannel implements Channel {
     groupFolder: string,
   ): Promise<NewMessageMedia | undefined> {
     let buffer: Buffer | undefined;
-    let fileName = attachment.name || `attachment_${attachment.id || Date.now()}`;
+    let fileName =
+      attachment.name || `attachment_${attachment.id || Date.now()}`;
     let mimetype = attachment.contentType || 'application/octet-stream';
 
     if (attachment.contentType === 'reference') {
@@ -597,9 +653,7 @@ export class TeamsChannel implements Channel {
       // Extract drive item URL from attachment content
       if (attachment.contentUrl) {
         try {
-          const stream = await client
-            .api(attachment.contentUrl)
-            .getStream();
+          const stream = await client.api(attachment.contentUrl).getStream();
           buffer = await this.streamToBuffer(stream);
         } catch (err) {
           logger.debug(
@@ -666,12 +720,14 @@ export class TeamsChannel implements Channel {
     };
   }
 
-  private async streamToBuffer(
-    stream: NodeJS.ReadableStream,
-  ): Promise<Buffer> {
+  private async streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
     const chunks: Buffer[] = [];
     for await (const chunk of stream) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as unknown as Uint8Array));
+      chunks.push(
+        Buffer.isBuffer(chunk)
+          ? chunk
+          : Buffer.from(chunk as unknown as Uint8Array),
+      );
     }
     return Buffer.concat(chunks);
   }
@@ -679,7 +735,10 @@ export class TeamsChannel implements Channel {
   // ─── Chat Metadata ─────────────────────────────────────────────
 
   private async syncChatMetadata(force = false): Promise<void> {
-    if (!force && Date.now() - this.lastMetadataSync < METADATA_SYNC_INTERVAL_MS) {
+    if (
+      !force &&
+      Date.now() - this.lastMetadataSync < METADATA_SYNC_INTERVAL_MS
+    ) {
       return;
     }
 
@@ -709,14 +768,14 @@ export class TeamsChannel implements Channel {
           let chatName = chat.topic as string | undefined;
           if (!chatName && !isGroup) {
             // For 1:1 chats, use the other person's display name
-            const members = chat.members as Array<{
-              displayName?: string;
-              userId?: string;
-            }> | undefined;
+            const members = chat.members as
+              | Array<{
+                  displayName?: string;
+                  userId?: string;
+                }>
+              | undefined;
             if (members) {
-              const other = members.find(
-                (m) => m.userId !== this.botUserId,
-              );
+              const other = members.find((m) => m.userId !== this.botUserId);
               chatName = other?.displayName;
             }
           }
@@ -755,10 +814,7 @@ export class TeamsChannel implements Channel {
       );
     } else if (this.isTransientError(err)) {
       // Exponential backoff: 5s, 10s, 20s, 40s, 60s max
-      this.backoffMs = Math.min(
-        (this.backoffMs || 5000) * 2,
-        60_000,
-      );
+      this.backoffMs = Math.min((this.backoffMs || 5000) * 2, 60_000);
       logger.warn(
         { instance: this.instanceName, backoffMs: this.backoffMs, err },
         'Teams transient error, backing off',
@@ -771,10 +827,7 @@ export class TeamsChannel implements Channel {
       this.polling = false;
       this.connected = false;
     } else {
-      logger.error(
-        { instance: this.instanceName, err },
-        'Teams poll error',
-      );
+      logger.error({ instance: this.instanceName, err }, 'Teams poll error');
     }
   }
 

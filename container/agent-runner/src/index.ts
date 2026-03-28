@@ -367,10 +367,19 @@ async function runQuery(
   let resultCount = 0;
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
+  // Also load per-instance global if present (instance-specific shared context)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
+  const instanceGlobalClaudeMdPath = '/workspace/instance-global/CLAUDE.md';
   let globalClaudeMd: string | undefined;
+  const globalParts: string[] = [];
   if (fs.existsSync(globalClaudeMdPath)) {
-    globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
+    globalParts.push(fs.readFileSync(globalClaudeMdPath, 'utf-8'));
+  }
+  if (fs.existsSync(instanceGlobalClaudeMdPath)) {
+    globalParts.push(fs.readFileSync(instanceGlobalClaudeMdPath, 'utf-8'));
+  }
+  if (globalParts.length > 0) {
+    globalClaudeMd = globalParts.join('\n\n');
   }
 
   // Discover additional directories mounted at /workspace/extra/*

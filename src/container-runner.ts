@@ -118,6 +118,19 @@ function buildVolumeMounts(
         readonly: true,
       });
     }
+
+    // Per-instance global directory (read-only for non-main)
+    // e.g. groups/aicx/global/ is mounted for all non-main groups in the "aicx" instance
+    if (instanceName) {
+      const instanceGlobalDir = path.join(GROUPS_DIR, instanceName, 'global');
+      if (fs.existsSync(instanceGlobalDir)) {
+        mounts.push({
+          hostPath: instanceGlobalDir,
+          containerPath: '/workspace/instance-global',
+          readonly: true,
+        });
+      }
+    }
   }
 
   // Per-group Claude sessions directory (isolated from other groups)
