@@ -45,6 +45,7 @@ function getSingleGroupDir(instanceName: string): string | undefined {
   for (const configFile of [
     'whatsapp-instances.json',
     'slack-instances.json',
+    'teams-instances.json',
   ]) {
     const configPath = path.join(DATA_DIR, configFile);
     if (!fs.existsSync(configPath)) continue;
@@ -122,7 +123,7 @@ export function migrateGroupFolders(instanceName: string, db: any): void {
     .all() as Array<{ jid: string; folder: string }>;
 
   // Filter to groups that belong to this instance (by JID prefix)
-  const instanceJidPrefixes = [`wa:${instanceName}:`, `slack:${instanceName}:`];
+  const instanceJidPrefixes = [`wa:${instanceName}:`, `slack:${instanceName}:`, `teams:${instanceName}:`];
   const toMigrate = (groups as Array<{ jid: string; folder: string }>).filter(
     (g) => instanceJidPrefixes.some((p) => g.jid.startsWith(p)),
   );

@@ -7,10 +7,11 @@
 import fs from 'fs';
 import path from 'path';
 
-import { STORE_DIR } from '../src/config.ts';
+import { DATA_DIR, STORE_DIR } from '../src/config.ts';
 import { initDatabase, setRegisteredGroup } from '../src/db.ts';
 import { isValidGroupFolder } from '../src/group-folder.ts';
 import { logger } from '../src/logger.ts';
+import type { ContainerConfig } from '../src/types.ts';
 import { emitStatus } from './status.ts';
 
 interface RegisterArgs {
@@ -22,6 +23,7 @@ interface RegisterArgs {
   requiresTrigger: boolean;
   isMain: boolean;
   assistantName: string;
+  instance: string;
 }
 
 function parseArgs(args: string[]): RegisterArgs {
@@ -34,6 +36,7 @@ function parseArgs(args: string[]): RegisterArgs {
     requiresTrigger: true,
     isMain: false,
     assistantName: 'Andy',
+    instance: '',
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -61,6 +64,9 @@ function parseArgs(args: string[]): RegisterArgs {
         break;
       case '--assistant-name':
         result.assistantName = args[++i] || 'Andy';
+        break;
+      case '--instance':
+        result.instance = args[++i] || '';
         break;
     }
   }
@@ -100,11 +106,47 @@ export async function run(args: string[]): Promise<void> {
   // Initialize database (creates schema + runs migrations)
   initDatabase();
 
+  // Build containerConfig from instance config files when --instance is provided
+  let containerConfig: ContainerConfig | undefined;
+  if (parsed.instance) {
+    containerConfig = { instanceName: parsed.instance };
+
+    // Look up instance settings from *-instances.json files
+    for (const configFile of [
+      'whatsapp-instances.json',
+      'slack-instances.json',
+      'teams-instances.json',
+    ]) {
+      const configPath = path.join(DATA_DIR, configFile);
+      if (!fs.existsSync(configPath)) continue;
+      try {
+        const instances = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        if (!Array.isArray(instances)) continue;
+        const inst = instances.find(
+          (i: { name?: string }) => i.name === parsed.instance,
+        );
+        if (inst) {
+          containerConfig = {
+            ...inst.containerConfig,
+            instanceName: parsed.instance,
+            assistantName:
+              inst.containerConfig?.assistantName ?? inst.assistantName,
+            model: inst.containerConfig?.model ?? inst.model,
+          };
+          break;
+        }
+      } catch {
+        /* ignore parse errors */
+      }
+    }
+  }
+
   setRegisteredGroup(parsed.jid, {
     name: parsed.name,
     folder: parsed.folder,
     trigger: parsed.trigger,
     added_at: new Date().toISOString(),
+    containerConfig,
     requiresTrigger: parsed.requiresTrigger,
     isMain: parsed.isMain,
   });

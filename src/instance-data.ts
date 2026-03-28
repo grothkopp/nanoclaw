@@ -86,7 +86,7 @@ export function getInstanceCommandsDir(
  * "legacy@g.us" → undefined
  */
 export function instanceNameFromJid(jid: string): string | undefined {
-  const match = jid.match(/^(?:wa|slack):([^:]+):/);
+  const match = jid.match(/^(?:wa|slack|teams):([^:]+):/);
   return match?.[1];
 }
 
