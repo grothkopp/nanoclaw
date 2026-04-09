@@ -16,6 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
@@ -141,8 +142,14 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
 
 /**
  * Archive the full transcript to conversations/ before compaction.
+ * Also write pending.md with the last task context and schedule a
+ * follow-up task to pick it up 3 minutes later.
  */
-function createPreCompactHook(assistantName?: string): HookCallback {
+function createPreCompactHook(
+  assistantName?: string,
+  groupFolder?: string,
+  chatJid?: string,
+): HookCallback {
   return async (input, _toolUseId, _context) => {
     const preCompact = input as PreCompactHookInput;
     const transcriptPath = preCompact.transcript_path;
@@ -176,12 +183,122 @@ function createPreCompactHook(assistantName?: string): HookCallback {
       fs.writeFileSync(filePath, markdown);
 
       log(`Archived conversation to ${filePath}`);
+
+      // Write pending.md with last user prompt for post-compaction follow-up
+      writePendingDelivery(messages, groupFolder, chatJid);
     } catch (err) {
       log(`Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     return {};
   };
+}
+
+/**
+ * Extract the last user message and write pending.md.
+ * Schedule a one-shot task 3 minutes later to pick it up.
+ */
+function writePendingDelivery(
+  messages: ParsedMessage[],
+  groupFolder?: string,
+  chatJid?: string,
+): void {
+  // Find the last user message
+  const lastUserMessages = messages.filter((m) => m.role === 'user');
+  if (lastUserMessages.length === 0) return;
+
+  const lastUserMsg = lastUserMessages[lastUserMessages.length - 1]!;
+
+  // Also grab the last assistant message for context
+  const lastAssistantMessages = messages.filter((m) => m.role === 'assistant');
+  const lastAssistantMsg =
+    lastAssistantMessages.length > 0
+      ? lastAssistantMessages[lastAssistantMessages.length - 1]!.content.slice(0, 1000)
+      : '';
+
+  const pendingPath = '/workspace/group/pending.md';
+  const now = new Date().toISOString();
+
+  const pendingContent = [
+    '# Pending Delivery',
+    '',
+    `Created: ${now}`,
+    '',
+    '## Last User Prompt',
+    '',
+    lastUserMsg.content,
+    '',
+    '## Last Assistant Context',
+    '',
+    lastAssistantMsg || '(no assistant response yet)',
+    '',
+    '## Instructions',
+    '',
+    'This file was created by the PreCompact hook because a context compaction occurred.',
+    'Read the user prompt above, continue working on the task, and send the result to Stefan.',
+    'After completing the task, delete this file.',
+  ].join('\n');
+
+  try {
+    fs.writeFileSync(pendingPath, pendingContent);
+    log(`Wrote pending delivery to ${pendingPath}`);
+  } catch (err) {
+    log(
+      `Failed to write pending.md: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return;
+  }
+
+  // Schedule a one-shot task 3 minutes from now to pick up pending.md
+  if (!groupFolder || !chatJid) {
+    log('No groupFolder/chatJid, skipping scheduled task creation');
+    return;
+  }
+
+  const dbPath = '/workspace/project/store/messages.db';
+  if (!fs.existsSync(dbPath)) {
+    log(`DB not found at ${dbPath}, skipping scheduled task creation`);
+    return;
+  }
+
+  const taskId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const runAt = new Date(Date.now() + 3 * 60 * 1000).toISOString();
+
+  const prompt = [
+    'A context compaction just happened. Read /workspace/group/pending.md for the task that was interrupted.',
+    'Continue working on that task and send the result to Stefan via send_message.',
+    'After you are done, delete /workspace/group/pending.md.',
+  ].join(' ');
+
+  try {
+    execSync(
+      `python3 -c "
+import sqlite3, sys
+conn = sqlite3.connect('${dbPath}')
+conn.execute('''
+  INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
+  VALUES (?, ?, ?, ?, 'once', ?, 'group', ?, 'active', ?)
+''', (
+  '${taskId}',
+  '${groupFolder}',
+  '${chatJid}',
+  '''${prompt.replace(/'/g, "''")}''',
+  '${runAt}',
+  '${runAt}',
+  '${now}',
+))
+conn.commit()
+conn.close()
+print('Scheduled pending delivery task: ${taskId}')
+"`,
+      { stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    log(`Scheduled pending delivery task ${taskId} for ${runAt}`);
+  } catch (err) {
+    log(
+      `Failed to schedule pending task: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 function sanitizeFilename(summary: string): string {
@@ -438,7 +555,7 @@ async function runQuery(
         },
       },
       hooks: {
-        PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+        PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName, containerInput.groupFolder, containerInput.chatJid)] }],
       },
     }
   })) {
