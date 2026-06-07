@@ -257,7 +257,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // suppress the final output to avoid duplicates.
         // Only suppress within a short time window so later results still get delivered.
         const lastIpcSend = ipcMessageSentAt.get(chatJid);
-        const withinSuppressWindow = lastIpcSend && (Date.now() - lastIpcSend) < IPC_SUPPRESS_WINDOW_MS;
+        const withinSuppressWindow =
+          lastIpcSend && Date.now() - lastIpcSend < IPC_SUPPRESS_WINDOW_MS;
         if (withinSuppressWindow) {
           logger.debug(
             { group: group.name },
@@ -482,7 +483,10 @@ async function startMessageLoop(): Promise<void> {
               channel
                 .setTyping?.(chatJid, true)
                 ?.catch((err) =>
-                  logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
+                  logger.warn(
+                    { chatJid, err },
+                    'Failed to set typing indicator',
+                  ),
                 );
             }
           } else {
@@ -670,7 +674,12 @@ async function main(): Promise<void> {
       // Advance the agent cursor so that when the container finishes (or a
       // scheduled task frees a slot), the message loop won't re-process
       // messages that were already answered via send_message.
-      const latest = getMessagesSince(jid, lastAgentTimestamp[jid] || '', ASSISTANT_NAME, 1);
+      const latest = getMessagesSince(
+        jid,
+        lastAgentTimestamp[jid] || '',
+        ASSISTANT_NAME,
+        1,
+      );
       if (latest.length > 0) {
         lastAgentTimestamp[jid] = latest[latest.length - 1].timestamp;
         saveState();
