@@ -71,9 +71,11 @@ let messageLoopRunning = false;
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
-// Track which chatJids had messages sent via IPC during the current container run.
+// Track when chatJids last had messages sent via IPC during the current container run.
 // Used to suppress duplicate output when the agent already sent via send_message.
-const ipcMessageSent = new Set<string>();
+// Only suppresses output within a short time window to avoid blocking later results.
+const IPC_SUPPRESS_WINDOW_MS = 30_000;
+const ipcMessageSentAt = new Map<string, number>();
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -234,7 +236,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let outputSentToUser = false;
 
   // Clear IPC send tracking for this chat before starting the agent
-  ipcMessageSent.delete(chatJid);
+  ipcMessageSentAt.delete(chatJid);
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
@@ -247,12 +249,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        // If the agent already sent messages via send_message IPC,
+        // If the agent sent a message via send_message IPC very recently,
         // suppress the final output to avoid duplicates.
-        if (ipcMessageSent.has(chatJid)) {
+        // Only suppress within a short time window so later results still get delivered.
+        const lastIpcSend = ipcMessageSentAt.get(chatJid);
+        const withinSuppressWindow = lastIpcSend && (Date.now() - lastIpcSend) < IPC_SUPPRESS_WINDOW_MS;
+        if (withinSuppressWindow) {
           logger.debug(
             { group: group.name },
-            'Suppressing agent output — already sent via IPC send_message',
+            `Suppressing agent output — sent via IPC ${Math.round((Date.now() - lastIpcSend) / 1000)}s ago (window: ${IPC_SUPPRESS_WINDOW_MS / 1000}s)`,
           );
         } else {
           await channel.sendMessage(chatJid, text);
@@ -654,7 +659,7 @@ async function main(): Promise<void> {
     sendMessage: (jid, text) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      ipcMessageSent.add(jid);
+      ipcMessageSentAt.set(jid, Date.now());
       return channel.sendMessage(jid, text);
     },
     registeredGroups: () => registeredGroups,
