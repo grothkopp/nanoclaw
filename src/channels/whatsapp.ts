@@ -181,7 +181,11 @@ export class WhatsAppChannel implements Channel {
         exec(
           `osascript -e 'display notification "${msg}" with title "NanoClaw" sound name "Basso"'`,
         );
-        setTimeout(() => process.exit(1), 1000);
+        // Resolve the connect promise so startup isn't blocked by one unauthenticated instance.
+        if (onFirstOpen) {
+          onFirstOpen();
+          onFirstOpen = undefined;
+        }
       }
 
       if (connection === 'close') {
@@ -211,8 +215,17 @@ export class WhatsAppChannel implements Channel {
             }, 5000);
           });
         } else {
-          logger.info('Logged out. Run /setup to re-authenticate.');
-          process.exit(0);
+          logger.error(
+            { instance: this.instanceName },
+            'WhatsApp logged out. Run /setup to re-authenticate this instance.',
+          );
+          // Don't process.exit — a single instance logout should not crash
+          // the entire service. Other channels and instances keep running.
+          // Resolve the connect promise so startup isn't blocked.
+          if (onFirstOpen) {
+            onFirstOpen();
+            onFirstOpen = undefined;
+          }
         }
       } else if (connection === 'open') {
         this.connected = true;
@@ -316,6 +329,25 @@ export class WhatsAppChannel implements Channel {
 
             // Skip protocol messages with no text content AND no media
             if (!content && !mediaType) continue;
+
+            // Translate WhatsApp @mentions of the bot to @AssistantName.
+            // WhatsApp encodes mentions as @<id> where <id> can be the phone number
+            // or the LID user part (e.g. @32668225953936). The agent doesn't
+            // recognize these numeric IDs as itself.
+            if (content && this.sock.user) {
+              const botIds = [
+                this.sock.user.id?.split(':')[0],
+                this.sock.user.lid?.split(':')[0],
+              ].filter(Boolean) as string[];
+              for (const botId of botIds) {
+                if (content.includes(`@${botId}`)) {
+                  content = content.replace(
+                    new RegExp(`@${botId}`, 'g'),
+                    `@${this.instanceAssistantName}`,
+                  );
+                }
+              }
+            }
 
             // Download and save media if present
             let mediaInfo: NewMessageMedia | undefined;

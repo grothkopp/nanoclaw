@@ -248,7 +248,9 @@ export class TeamsChannel implements Channel {
         { instance: this.instanceName },
         'Teams: Failed to acquire token — run /add-teams to re-authenticate',
       );
-      throw new Error('Teams authentication failed');
+      // Don't throw — a failed Teams connection should not crash the entire service.
+      // The channel stays disconnected; other channels continue working.
+      return;
     }
 
     // Get bot's own user ID for bot detection

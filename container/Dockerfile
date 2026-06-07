@@ -78,6 +78,17 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 # Install agent-browser, claude-code, and Google Workspace CLI globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code @googleworkspace/cli
 
+# Replace gws glibc binary with musl-static build.
+# The npm-installed binary requires glibc 2.39+ but Debian 12 has 2.36.
+# The musl variant is statically linked and works on any Linux.
+RUN GWS_DIR=$(npm root -g)/@googleworkspace/cli && \
+    GWS_VER=$(node -p "require('${GWS_DIR}/package.json').version") && \
+    curl -fsSL "https://github.com/googleworkspace/cli/releases/download/v${GWS_VER}/google-workspace-cli-x86_64-unknown-linux-musl.tar.gz" \
+    | tar xz -C /tmp/ && \
+    cp /tmp/gws "${GWS_DIR}/bin/gws" && \
+    chmod +x "${GWS_DIR}/bin/gws" && \
+    rm -f /tmp/gws
+
 # Create app directory
 WORKDIR /app
 
@@ -102,7 +113,8 @@ COPY scripts/git-credential-proxy /usr/local/bin/git-credential-proxy
 RUN chmod +x /usr/local/bin/git-credential-proxy
 
 # Install GitHub CLI
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+# Reset /tmp permissions (buildkit can lose sticky bit across layers)
+RUN chmod 1777 /tmp && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
     > /etc/apt/sources.list.d/github-cli.list \

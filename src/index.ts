@@ -231,7 +231,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }, IDLE_TIMEOUT);
   };
 
-  await channel.setTyping?.(chatJid, true);
+  // Only show typing indicator for main groups and DMs, not group chats
+  // where the agent may choose to stay silent
+  if (isMainGroup || !chatJid.includes('@g.us')) {
+    await channel.setTyping?.(chatJid, true);
+  }
   let hadError = false;
   let outputSentToUser = false;
 
@@ -473,11 +477,14 @@ async function startMessageLoop(): Promise<void> {
               messagesToSend[messagesToSend.length - 1].timestamp;
             saveState();
             // Show typing indicator while the container processes the piped message
-            channel
-              .setTyping?.(chatJid, true)
-              ?.catch((err) =>
-                logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
-              );
+            // Skip for non-main group chats where the agent may stay silent
+            if (isMainGroup || !chatJid.includes('@g.us')) {
+              channel
+                .setTyping?.(chatJid, true)
+                ?.catch((err) =>
+                  logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
+                );
+            }
           } else {
             // No active container — enqueue for a new one
             queue.enqueueMessageCheck(chatJid);
@@ -660,6 +667,14 @@ async function main(): Promise<void> {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       ipcMessageSentAt.set(jid, Date.now());
+      // Advance the agent cursor so that when the container finishes (or a
+      // scheduled task frees a slot), the message loop won't re-process
+      // messages that were already answered via send_message.
+      const latest = getMessagesSince(jid, lastAgentTimestamp[jid] || '', ASSISTANT_NAME, 1);
+      if (latest.length > 0) {
+        lastAgentTimestamp[jid] = latest[latest.length - 1].timestamp;
+        saveState();
+      }
       return channel.sendMessage(jid, text);
     },
     registeredGroups: () => registeredGroups,

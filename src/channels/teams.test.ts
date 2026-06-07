@@ -69,16 +69,14 @@ const mockMsal = vi.hoisted(() => ({
   }),
   acquireTokenByDeviceCode: vi.fn(),
   getTokenCache: vi.fn().mockReturnValue({
-    getAllAccounts: vi
-      .fn()
-      .mockResolvedValue([
-        {
-          homeAccountId: 'test',
-          environment: 'test',
-          tenantId: 'test',
-          username: 'test@test.com',
-        },
-      ]),
+    getAllAccounts: vi.fn().mockResolvedValue([
+      {
+        homeAccountId: 'test',
+        environment: 'test',
+        tenantId: 'test',
+        username: 'test@test.com',
+      },
+    ]),
   }),
 }));
 

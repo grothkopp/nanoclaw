@@ -15,6 +15,7 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
+  STORE_DIR,
   TIMEZONE,
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
@@ -115,6 +116,19 @@ function buildVolumeMounts(
       mounts.push({
         hostPath: globalDir,
         containerPath: '/workspace/global',
+        readonly: true,
+      });
+    }
+
+    // Mount the messages DB read-only so scheduled tasks (heartbeat, etc.)
+    // can query conversation history without needing full project access.
+    const dbPath = path.join(STORE_DIR, 'messages.db');
+    if (fs.existsSync(dbPath)) {
+      // Create the target directory structure so the mount path is consistent
+      // with what main groups see at /workspace/project/store/messages.db
+      mounts.push({
+        hostPath: dbPath,
+        containerPath: '/workspace/project/store/messages.db',
         readonly: true,
       });
     }
